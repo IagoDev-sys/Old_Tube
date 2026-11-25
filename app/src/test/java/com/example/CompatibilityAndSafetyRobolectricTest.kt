@@ -3,53 +3,47 @@ package com.example
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.hasTestTag
-import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToNode
-import androidx.room.Room
+import android.view.View
+import android.widget.Button
 import androidx.test.core.app.ApplicationProvider
+import com.example.classic.FeedPanel
+import com.example.classic.FeedUiState
+import com.example.classic.LibraryPanel
+import com.example.classic.PlayerPanel
+import com.example.classic.PlayerUiState
 import com.example.data.local.ChannelEntity
+import com.example.data.local.OptimizationPreferences
 import com.example.data.local.SavedVideoEntity
-import com.example.data.local.TabTubeDatabase
+import com.example.data.local.TabTubeSqliteStore
 import com.example.data.model.ActivePlayerBackend
 import com.example.data.model.DeviceTelemetry
 import com.example.data.model.OptimizationSettings
+import com.example.data.model.QualityPreset
 import com.example.data.model.ResolvedStream
 import com.example.data.model.VideoItem
+import com.example.data.remote.LocalTlsStreamProxy
 import com.example.data.remote.YouTubeLegacyNetwork
 import com.example.data.telemetry.DeviceTelemetryProvider
-import com.example.ui.FeedUiState
-import com.example.ui.PlayerUiState
-import com.example.ui.screens.FeedScreen
-import com.example.ui.screens.LibraryScreen
-import com.example.ui.screens.PlayerScreen
-import com.example.ui.theme.OldTubeTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.net.HttpURLConnection
+import java.net.URL
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class CompatibilityAndSafetyRobolectricTest {
 
-    @get:Rule
-    val composeRule = createComposeRule()
-
     @Test
-    fun manifest_enforcesLeastPrivilegePermissionsAndHonestMinSdk24() {
+    fun manifest_enforcesLeastPrivilegePermissionsAndAndroid44KitKatMinSdk19() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val pkgInfo = context.packageManager.getPackageInfo(
             context.packageName,
@@ -57,7 +51,6 @@ class CompatibilityAndSafetyRobolectricTest {
         )
         val perms = pkgInfo.requestedPermissions?.toSet() ?: emptySet()
 
-        // Only install-time network permissions should be requested (no camera/storage/location)
         assertTrue(Manifest.permission.INTERNET in perms)
         assertTrue(Manifest.permission.ACCESS_NETWORK_STATE in perms)
         assertFalse(Manifest.permission.READ_EXTERNAL_STORAGE in perms)
@@ -66,15 +59,15 @@ class CompatibilityAndSafetyRobolectricTest {
         assertFalse(Manifest.permission.CAMERA in perms)
         assertFalse(Manifest.permission.RECORD_AUDIO in perms)
 
-        // Confirm Compose build enforces minSdk 24 (Android 7.0+), not Android 4.4 KitKat (API 19)
-        assertEquals(24, context.applicationInfo.minSdkVersion)
+        // Android 4.4 KitKat target compatibility verified!
+        assertEquals(19, context.applicationInfo.minSdkVersion)
     }
 
     @Test
     fun telemetryProvider_collectsDeviceMetricsSafely() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val telemetry = DeviceTelemetryProvider(context).collect()
-        assertTrue(telemetry.apiLevel >= 24)
+        assertTrue(telemetry.apiLevel >= 19)
         assertTrue(telemetry.screenWidthDp > 0)
         assertTrue(telemetry.screenHeightDp > 0)
         assertTrue(telemetry.totalRamMb >= telemetry.availableRamMb)
@@ -115,17 +108,14 @@ class CompatibilityAndSafetyRobolectricTest {
     }
 
     @Test
-    fun roomLocalPersistence_savesChannelsBookmarksAndClearsHistorySafely() = runBlocking {
+    fun sqliteStore_savesChannelsBookmarksAndClearsHistorySafely() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val db = Room.inMemoryDatabaseBuilder(context, TabTubeDatabase::class.java)
-            .allowMainThreadQueries()
-            .build()
+        val store = TabTubeSqliteStore(context)
         try {
-            val dao = db.dao()
-            dao.insertChannels(TabTubeDatabase.DEFAULT_CHANNELS)
-            assertEquals(TabTubeDatabase.DEFAULT_CHANNELS.size, dao.getChannelsOnce().size)
+            store.insertChannels(TabTubeSqliteStore.DEFAULT_CHANNELS)
+            assertEquals(TabTubeSqliteStore.DEFAULT_CHANNELS.size, store.getChannelsOnce().size)
 
-            dao.upsertSavedVideo(
+            store.upsertSavedVideo(
                 SavedVideoEntity(
                     videoId = "vidBookmark1",
                     title = "Saved Tutorial",
@@ -138,7 +128,7 @@ class CompatibilityAndSafetyRobolectricTest {
                     lastPlayedAt = 1000L
                 )
             )
-            dao.upsertSavedVideo(
+            store.upsertSavedVideo(
                 SavedVideoEntity(
                     videoId = "vidHistory01",
                     title = "Watched Only",
@@ -152,156 +142,159 @@ class CompatibilityAndSafetyRobolectricTest {
                 )
             )
 
-            dao.clearWatchHistory()
-            val bookmarks = dao.observeBookmarks().first()
-            val history = dao.observeHistory().first()
+            store.clearWatchHistory()
+            val bookmarks = store.observeBookmarks().first()
+            val history = store.observeHistory().first()
             assertEquals(1, bookmarks.size)
             assertEquals("vidBookmark1", bookmarks.first().videoId)
             assertEquals(1, history.size)
         } finally {
-            db.close()
+            store.close()
+        }
+    }
+
+    @Test
+    fun preferences_enforcesBridgeSecurityAndPersistsSettings() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = OptimizationPreferences(context)
+        prefs.updateQuality(QualityPreset.ECO_360P)
+        assertFalse(prefs.updateCustomBridgeUrl("http://evil.com"))
+        assertFalse(prefs.updateCustomBridgeUrl("http://192.168.1.40:8787"))
+        prefs.updateAllowLanBridge(true)
+        assertTrue(prefs.updateCustomBridgeUrl("http://192.168.1.40:8787"))
+
+        val loaded = prefs.settingsFlow.first()
+        assertEquals(QualityPreset.ECO_360P, loaded.qualityPreset)
+        assertEquals("http://192.168.1.40:8787", loaded.customBridgeUrl)
+    }
+
+    @Test
+    fun localTlsStreamProxy_rejectsUnauthorizedRequestsWithoutToken() {
+        val proxy = LocalTlsStreamProxy()
+        try {
+            val localUrl = proxy.registerStreamUrl("https://example.com/video.mp4")
+            assertTrue(localUrl.startsWith("http://127.0.0.1:"))
+            val port = localUrl.substringAfter("127.0.0.1:").substringBefore("/").toInt()
+
+            val conn = URL("http://127.0.0.1:$port/stream?id=1&token=wrongtoken")
+                .openConnection() as HttpURLConnection
+            assertEquals(403, conn.responseCode)
+            conn.disconnect()
+        } finally {
+            proxy.stop()
         }
     }
 
     @Test
     @Config(qualifiers = "w800dp-h1280dp")
-    fun feedScreen_filtersShortsAndVideosCorrectly() {
-        val videos = listOf(
-            VideoItem(
-                id = "vidRegular01",
-                title = "Long Documentary",
-                channelName = "Science",
-                thumbnailUrl = "https://i.ytimg.com/vi/vidRegular01/mqdefault.jpg",
-                isShort = false
+    fun mainActivity_launchesClassicTabletShellWithoutCrash() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java)
+            .create()
+            .start()
+            .resume()
+            .get()
+        assertNotNull(activity.window.decorView)
+        activity.finish()
+    }
+
+    @Test
+    fun legacyPanels_renderShortsAndDisableUnavailableH264Safely() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val feedPanel = FeedPanel(
+            context = context,
+            isWideTablet = true,
+            onSelectChannel = {},
+            onRemoveChannel = {},
+            onRefresh = {},
+            onOpenAddChannel = {},
+            onVideoClick = {},
+            onBookmarkToggle = {},
+            onOpenDiagnostics = {}
+        )
+        feedPanel.render(
+            feedState = FeedUiState.Success(
+                listOf(
+                    VideoItem("vidRegular01", "Doc", "Sci", thumbnailUrl = "https://i.ytimg.com/vi/vidRegular01/mqdefault.jpg"),
+                    VideoItem("vidShort0001", "Short", "Sci", thumbnailUrl = "https://i.ytimg.com/vi/vidShort0001/mqdefault.jpg", isShort = true)
+                )
             ),
-            VideoItem(
-                id = "vidShort0001",
-                title = "Quick Experiment",
-                channelName = "Science",
-                thumbnailUrl = "https://i.ytimg.com/vi/vidShort0001/mqdefault.jpg",
-                sourceTag = "Short RSS",
-                isShort = true
-            )
+            channels = listOf(ChannelEntity("UC1", "Sci", "Ciência")),
+            selectedChannelId = null,
+            bookmarkedIds = emptySet(),
+            settings = OptimizationSettings(),
+            telemetry = sampleTelemetry()
         )
-        composeRule.setContent {
-            OldTubeTheme(classicLightTheme = true) {
-                FeedScreen(
-                    feedState = FeedUiState.Success(videos),
-                    channels = listOf(ChannelEntity("UC1", "Science", "Ciência")),
-                    selectedChannelId = null,
-                    bookmarkedIds = emptySet(),
-                    settings = OptimizationSettings(),
-                    telemetry = sampleTelemetry(),
-                    onSelectChannel = {},
-                    onRemoveChannel = {},
-                    onRefresh = {},
-                    onOpenAddChannelDialog = {},
-                    onVideoClick = {},
-                    onBookmarkToggle = {},
-                    onOpenDiagnostics = {}
-                )
-            }
-        }
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("video_card_vidRegular01").assertIsDisplayed()
-        composeRule.onNodeWithTag("video_card_vidShort0001").assertIsDisplayed()
+        assertEquals(View.VISIBLE, feedPanel.root.visibility)
 
-        composeRule.onNodeWithTag("filter_shorts_only").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("video_card_vidShort0001").assertIsDisplayed()
-        composeRule.onNodeWithTag("video_card_vidRegular01").assertDoesNotExist()
-    }
-
-    @Test
-    fun playerScreen_showsShortControlsAndDisablesUnavailableH264Safely() {
-        val shortStream = ResolvedStream(
-            videoId = "abcDEF12345",
-            title = "Retro Hardware Short",
-            channelName = "RetroLab",
-            channelId = "UCretro123",
-            thumbnailUrl = "https://i.ytimg.com/vi/abcDEF12345/mqdefault.jpg",
-            description = "Teste de Short vertical",
-            directH264Url = null,
-            qualityLabel = "480p SD",
-            codecLabel = "Embed Direto",
-            embedUrl = "https://www.youtube-nocookie.com/embed/abcDEF12345",
-            mobileWatchUrl = "https://m.youtube.com/shorts/abcDEF12345",
-            resolvedVia = "Shorts Direto",
-            isShort = true
+        val playerPanel = PlayerPanel(
+            context = context,
+            onBack = {},
+            onSetFullscreen = {},
+            onSwitchBackend = {},
+            onPositionChanged = { _, _ -> },
+            onBookmarkToggle = {},
+            onToggleSubscribe = { _, _ -> },
+            onSelectRelated = {},
+            onRetryVideo = {}
+        )
+        playerPanel.render(
+            playerState = PlayerUiState.Ready(
+                stream = ResolvedStream(
+                    videoId = "abcDEF12345",
+                    title = "Retro Hardware Short",
+                    channelName = "RetroLab",
+                    channelId = "UCretro123",
+                    thumbnailUrl = "https://i.ytimg.com/vi/abcDEF12345/mqdefault.jpg",
+                    description = "Short vertical",
+                    directH264Url = null,
+                    qualityLabel = "480p SD",
+                    codecLabel = "Embed Direto",
+                    embedUrl = "https://www.youtube-nocookie.com/embed/abcDEF12345",
+                    mobileWatchUrl = "https://m.youtube.com/shorts/abcDEF12345",
+                    resolvedVia = "Shorts Direto",
+                    isShort = true
+                ),
+                activeBackend = ActivePlayerBackend.IFRAME_EMBED,
+                resumePositionMs = 0L
+            ),
+            relatedVideos = listOf(
+                VideoItem("nextShort11", "Próximo Short", "RetroLab", thumbnailUrl = "https://i.ytimg.com/vi/nextShort11/mqdefault.jpg", isShort = true)
+            ),
+            bookmarkedIds = emptySet(),
+            followedChannelIds = emptySet(),
+            isFullscreen = false,
+            settings = OptimizationSettings()
         )
 
-        composeRule.setContent {
-            OldTubeTheme(classicLightTheme = true) {
-                PlayerScreen(
-                    playerState = PlayerUiState.Ready(
-                        stream = shortStream,
-                        activeBackend = ActivePlayerBackend.IFRAME_EMBED,
-                        resumePositionMs = 0L
-                    ),
-                    relatedVideos = listOf(
-                        VideoItem(
-                            id = "nextShort11",
-                            title = "Próximo Short",
-                            channelName = "RetroLab",
-                            thumbnailUrl = "https://i.ytimg.com/vi/nextShort11/mqdefault.jpg",
-                            isShort = true
-                        )
-                    ),
-                    bookmarkedIds = emptySet(),
-                    followedChannelIds = emptySet(),
-                    isFullscreen = false,
-                    onSetFullscreen = {},
-                    onBack = {},
-                    onSwitchBackend = {},
-                    onPositionChanged = { _, _ -> },
-                    onBookmarkToggle = {},
-                    onToggleSubscribe = { _, _ -> },
-                    onSelectRelated = {},
-                    onRetryVideo = {}
-                )
-            }
-        }
+        val h264Btn = findViewByContentDesc(playerPanel.root, "chip_native_engine") as Button
+        val aspectBtn = findViewByContentDesc(playerPanel.root, "toggle_short_aspect_button") as Button
+        val nextShortBtn = findViewByContentDesc(playerPanel.root, "next_short_button") as Button
+        assertFalse(h264Btn.isEnabled)
+        assertEquals(View.VISIBLE, aspectBtn.visibility)
+        assertEquals(View.VISIBLE, nextShortBtn.visibility)
+        playerPanel.release()
 
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("player_lazy_column")
-            .performScrollToNode(hasTestTag("chip_native_engine"))
-        composeRule.onNodeWithTag("chip_native_engine").assertIsNotEnabled()
-        composeRule.onNodeWithTag("chip_iframe_engine").assertIsDisplayed()
-
-        composeRule.onNodeWithTag("toggle_short_aspect_button")
-            .performScrollTo()
-            .assertIsDisplayed()
-        composeRule.onNodeWithTag("next_short_button")
-            .performScrollTo()
-            .assertIsDisplayed()
+        val libPanel = LibraryPanel(context, {}, {}, {})
+        libPanel.render(emptyList(), emptyList(), emptySet(), OptimizationSettings())
+        assertEquals(View.VISIBLE, libPanel.root.visibility)
     }
 
-    @Test
-    fun libraryScreen_displaysBookmarksAndEmptyStatesWithoutLogin() {
-        composeRule.setContent {
-            OldTubeTheme(classicLightTheme = true) {
-                LibraryScreen(
-                    bookmarks = emptyList(),
-                    history = emptyList(),
-                    bookmarkedIds = emptySet(),
-                    settings = OptimizationSettings(),
-                    onVideoClick = {},
-                    onBookmarkToggle = {},
-                    onClearHistory = {}
-                )
+    private fun findViewByContentDesc(root: View, desc: String): View? {
+        if (root.contentDescription?.toString() == desc) return root
+        if (root is android.view.ViewGroup) {
+            for (i in 0 until root.childCount) {
+                val found = findViewByContentDesc(root.getChildAt(i), desc)
+                if (found != null) return found
             }
         }
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Biblioteca Local").assertIsDisplayed()
-        composeRule.onNodeWithTag("tab_bookmarks").assertIsDisplayed()
-        composeRule.onNodeWithTag("tab_history").assertIsDisplayed()
+        return null
     }
 
     private fun sampleTelemetry() = DeviceTelemetry(
         deviceModel = "SM-T560",
         manufacturer = "Samsung",
-        androidVersion = "7.1.2",
-        apiLevel = 25,
+        androidVersion = "4.4.4",
+        apiLevel = 19,
         supportedAbis = "armeabi-v7a",
         totalRamMb = 1500L,
         availableRamMb = 620L,

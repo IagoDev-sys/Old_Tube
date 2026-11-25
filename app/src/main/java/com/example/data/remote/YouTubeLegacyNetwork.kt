@@ -11,26 +11,16 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import okhttp3.ConnectionPool
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import java.io.StringReader
+import java.net.URI
 import java.net.URLEncoder
-import java.util.concurrent.TimeUnit
 
-class YouTubeLegacyNetwork {
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
-        .followRedirects(true)
-        .build()
+class YouTubeLegacyNetwork(
+    private val http: KitKatHttpClient = KitKatHttpClient()
+) {
 
     private val defaultBridges = listOf(
         "https://inv.nadeko.net",
@@ -209,7 +199,8 @@ class YouTubeLegacyNetwork {
     suspend fun searchVideos(
         query: String,
         lowRamThumbnails: Boolean,
-        customBridgeUrl: String
+        customBridgeUrl: String,
+        allowLanBridge: Boolean = false
     ): List<VideoItem> = withContext(Dispatchers.IO) {
         val cleanQuery = query.trim()
         if (cleanQuery.isBlank()) return@withContext emptyList()
@@ -222,18 +213,15 @@ class YouTubeLegacyNetwork {
             return@withContext directResults
         }
 
-        val bridges = (listOf(customBridgeUrl) + defaultBridges)
-            .map { it.trim().trimEnd('/') }
-            .filter { it.startsWith("https://") }
-            .distinct()
-        for (bridge in bridges.take(3)) {
+        val bridges = collectValidBridges(customBridgeUrl, allowLanBridge)
+        for (bridge in bridges.take(4)) {
             val invidious = runCatching {
-                searchViaInvidious(bridge, cleanQuery, lowRamThumbnails)
+                searchViaInvidious(bridge, cleanQuery, lowRamThumbnails, allowLanBridge)
             }.getOrDefault(emptyList())
             if (invidious.isNotEmpty()) return@withContext invidious
 
             val piped = runCatching {
-                searchViaPiped(bridge, cleanQuery, lowRamThumbnails)
+                searchViaPiped(bridge, cleanQuery, lowRamThumbnails, allowLanBridge)
             }.getOrDefault(emptyList())
             if (piped.isNotEmpty()) return@withContext piped
         }
@@ -316,7 +304,6 @@ class YouTubeLegacyNetwork {
                     continue
                 }
 
-                // Extract Shorts shelf items when present in search
                 val reelItems = entry.optJSONObject("reelShelfRenderer")?.optJSONArray("items")
                 if (reelItems != null) {
                     for (k in 0 until reelItems.length()) {
@@ -349,10 +336,12 @@ class YouTubeLegacyNetwork {
     private fun searchViaInvidious(
         bridgeUrl: String,
         query: String,
-        lowRamThumbnails: Boolean
+        lowRamThumbnails: Boolean,
+        allowLanBridge: Boolean
     ): List<VideoItem> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val body = httpGet("$bridgeUrl/api/v1/search?q=$encoded&type=video") ?: return emptyList()
+        val body = httpGet("$bridgeUrl/api/v1/search?q=$encoded&type=video", allowPrivateLanHttp = allowLanBridge)
+            ?: return emptyList()
         if (!body.trimStart().startsWith("[")) return emptyList()
         val arr = JSONArray(body)
         val list = mutableListOf<VideoItem>()
@@ -372,7 +361,7 @@ class YouTubeLegacyNetwork {
                     publishedAt = item.optString("publishedText"),
                     durationText = formatDuration(item.optLong("lengthSeconds", 0L)),
                     viewCountText = formatViews(item.optLong("viewCount", -1L).takeIf { it >= 0 }?.toString() ?: ""),
-                    sourceTag = "Invidious API"
+                    sourceTag = "Bridge API"
                 )
             )
             if (list.size >= 24) break
@@ -383,10 +372,12 @@ class YouTubeLegacyNetwork {
     private fun searchViaPiped(
         bridgeUrl: String,
         query: String,
-        lowRamThumbnails: Boolean
+        lowRamThumbnails: Boolean,
+        allowLanBridge: Boolean
     ): List<VideoItem> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val body = httpGet("$bridgeUrl/search?q=$encoded&filter=videos") ?: return emptyList()
+        val body = httpGet("$bridgeUrl/search?q=$encoded&filter=videos", allowPrivateLanHttp = allowLanBridge)
+            ?: return emptyList()
         if (!body.trimStart().startsWith("{")) return emptyList()
         val json = JSONObject(body)
         val items = json.optJSONArray("items") ?: return emptyList()
@@ -468,7 +459,7 @@ class YouTubeLegacyNetwork {
             )
         }
 
-        // 1. Try direct InnerTube progressive H.264 stream (fastest, avoids community bridge downtime)
+        // 1. Try direct InnerTube progressive H.264 stream (fastest, avoids bridge downtime)
         val directInnerTube = runCatching {
             resolveViaInnerTube(
                 videoId = videoId,
@@ -487,12 +478,9 @@ class YouTubeLegacyNetwork {
             return@withContext directInnerTube
         }
 
-        // 2. Fallback to Invidious / Piped community bridges
-        val bridges = (listOf(settings.customBridgeUrl) + defaultBridges)
-            .map { it.trim().trimEnd('/') }
-            .filter { it.startsWith("https://") }
-            .distinct()
-        for (bridge in bridges.take(3)) {
+        // 2. Fallback to Custom / Community Bridge API
+        val bridges = collectValidBridges(settings.customBridgeUrl, settings.allowLanBridge)
+        for (bridge in bridges.take(4)) {
             val bridgeResult = runCatching {
                 resolveFromBridge(
                     bridgeUrl = bridge,
@@ -505,7 +493,8 @@ class YouTubeLegacyNetwork {
                     fallbackDesc = desc,
                     embedUrl = embedUrl,
                     mobileWatchUrl = mobileWatchUrl,
-                    isShort = isShort
+                    isShort = isShort,
+                    allowLanBridge = settings.allowLanBridge
                 )
             }.getOrNull()
             if (bridgeResult != null && bridgeResult.directH264Url != null) {
@@ -563,22 +552,20 @@ class YouTubeLegacyNetwork {
                 put("racyCheckOk", true)
             }.toString()
 
-            val req = Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
-                .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                .header("User-Agent", userAgent)
-                .header("Content-Type", "application/json")
-                .header("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-                .build()
-
-            val body = runCatching {
-                client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use null
-                    resp.body?.string()
-                }
+            val resp = runCatching {
+                http.postJson(
+                    rawUrl = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    jsonBody = payload,
+                    headers = mapOf(
+                        "User-Agent" to userAgent,
+                        "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
+                    )
+                )
             }.getOrNull() ?: continue
 
-            val json = runCatching { JSONObject(body) }.getOrNull() ?: continue
+            if (!resp.isSuccessful || resp.body.isBlank()) continue
+
+            val json = runCatching { JSONObject(resp.body) }.getOrNull() ?: continue
             val status = json.optJSONObject("playabilityStatus")?.optString("status") ?: ""
             if (status != "OK") continue
 
@@ -598,7 +585,7 @@ class YouTubeLegacyNetwork {
                 codecLabel = "H.264 / MP4 (Hardware)",
                 embedUrl = embedUrl,
                 mobileWatchUrl = mobileWatchUrl,
-                resolvedVia = "Stream Direto ($clientName)",
+                resolvedVia = "API Direta ($clientName)",
                 isShort = isShort
             )
         }
@@ -638,9 +625,10 @@ class YouTubeLegacyNetwork {
         fallbackDesc: String,
         embedUrl: String,
         mobileWatchUrl: String,
-        isShort: Boolean
+        isShort: Boolean,
+        allowLanBridge: Boolean
     ): ResolvedStream? {
-        val invBody = httpGet("$bridgeUrl/api/v1/videos/$videoId")
+        val invBody = httpGet("$bridgeUrl/api/v1/videos/$videoId", allowPrivateLanHttp = allowLanBridge)
         if (invBody != null && invBody.trimStart().startsWith("{")) {
             val json = JSONObject(invBody)
             val formatStreams = json.optJSONArray("formatStreams")
@@ -659,14 +647,14 @@ class YouTubeLegacyNetwork {
                         codecLabel = "H.264 / MP4 (Hardware)",
                         embedUrl = embedUrl,
                         mobileWatchUrl = mobileWatchUrl,
-                        resolvedVia = bridgeUrl.removePrefix("https://"),
+                        resolvedVia = bridgeUrl.removePrefix("https://").removePrefix("http://"),
                         isShort = isShort
                     )
                 }
             }
         }
 
-        val pipedBody = httpGet("$bridgeUrl/streams/$videoId")
+        val pipedBody = httpGet("$bridgeUrl/streams/$videoId", allowPrivateLanHttp = allowLanBridge)
         if (pipedBody != null && pipedBody.trimStart().startsWith("{")) {
             val json = JSONObject(pipedBody)
             val streams = json.optJSONArray("videoStreams")
@@ -685,7 +673,7 @@ class YouTubeLegacyNetwork {
                         codecLabel = "H.264 / AVC (Hardware)",
                         embedUrl = embedUrl,
                         mobileWatchUrl = mobileWatchUrl,
-                        resolvedVia = bridgeUrl.removePrefix("https://"),
+                        resolvedVia = bridgeUrl.removePrefix("https://").removePrefix("http://"),
                         isShort = isShort
                     )
                 }
@@ -742,49 +730,59 @@ class YouTubeLegacyNetwork {
         return chosen.url to chosen.quality
     }
 
-    suspend fun pingBridgeInstances(customBridgeUrl: String): List<BridgePingResult> =
-        withContext(Dispatchers.IO) {
-            val targets = (listOf(customBridgeUrl) + defaultBridges)
-                .map { it.trim().trimEnd('/') }
-                .filter { it.startsWith("https://") }
-                .distinct()
-            coroutineScope {
-                targets.map { base ->
-                    async {
-                        val start = System.currentTimeMillis()
-                        val ok = runCatching {
-                            val req = Request.Builder()
-                                .url("$base/api/v1/stats")
-                                .header("User-Agent", DESKTOP_UA)
-                                .build()
-                            client.newCall(req).execute().use { resp ->
-                                resp.isSuccessful || resp.code in 200..499
-                            }
-                        }.getOrDefault(false)
-                        val elapsed = System.currentTimeMillis() - start
-                        BridgePingResult(
-                            baseUrl = base,
-                            reachable = ok,
-                            latencyMs = elapsed,
-                            note = if (ok) "Online (${elapsed} ms)" else "Indisponível / Timeout"
+    suspend fun pingBridgeInstances(
+        customBridgeUrl: String,
+        allowLanBridge: Boolean = false
+    ): List<BridgePingResult> = withContext(Dispatchers.IO) {
+        val targets = collectValidBridges(customBridgeUrl, allowLanBridge)
+        coroutineScope {
+            targets.map { base ->
+                async {
+                    val start = System.currentTimeMillis()
+                    val ok = runCatching {
+                        val resp = http.getText(
+                            rawUrl = "$base/api/v1/stats",
+                            headers = mapOf("User-Agent" to DESKTOP_UA),
+                            allowPrivateLanHttp = allowLanBridge
                         )
-                    }
-                }.awaitAll()
+                        resp != null && (resp.isSuccessful || resp.code in 200..499)
+                    }.getOrDefault(false)
+                    val elapsed = System.currentTimeMillis() - start
+                    BridgePingResult(
+                        baseUrl = base,
+                        reachable = ok,
+                        latencyMs = elapsed,
+                        note = if (ok) "Online (${elapsed} ms)" else "Indisponível / Timeout"
+                    )
+                }
+            }.awaitAll()
+        }
+    }
+
+    private fun collectValidBridges(customBridgeUrl: String, allowLanBridge: Boolean): List<String> {
+        return (listOf(customBridgeUrl) + defaultBridges)
+            .map { it.trim().trimEnd('/') }
+            .filter {
+                isSafeBridgeUrl(it) || (allowLanBridge && isSafeLocalLanBridgeUrl(it))
             }
-        }
+            .distinct()
+    }
 
-    private fun httpGet(url: String, mobileUa: Boolean = true): String? {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", if (mobileUa) MOBILE_UA else DESKTOP_UA)
-            .header("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-            .header("Cookie", "CONSENT=YES+cb.20210328-17-p0.en+FX+999; SOCS=CAI")
-            .build()
-
-        return client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            response.body?.string()
-        }
+    private fun httpGet(
+        url: String,
+        mobileUa: Boolean = true,
+        allowPrivateLanHttp: Boolean = false
+    ): String? {
+        val resp = http.getText(
+            rawUrl = url,
+            headers = mapOf(
+                "User-Agent" to if (mobileUa) MOBILE_UA else DESKTOP_UA,
+                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
+                "Cookie" to "CONSENT=YES+cb.20210328-17-p0.en+FX+999; SOCS=CAI"
+            ),
+            allowPrivateLanHttp = allowPrivateLanHttp
+        ) ?: return null
+        return if (resp.isSuccessful) resp.body else null
     }
 
     private fun extractBalancedJsonObject(html: String, symbol: String): String? {
@@ -872,26 +870,41 @@ class YouTubeLegacyNetwork {
         private const val DESKTOP_UA =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         private const val MOBILE_UA =
-            "Mozilla/5.0 (Linux; Android 7.0; SM-T560) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "Mozilla/5.0 (Linux; Android 4.4.4; SM-T560) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/33.0.0.0 Safari/537.36"
 
         fun isSafeBridgeUrl(rawUrl: String): Boolean {
             val trimmed = rawUrl.trim().trimEnd('/')
             if (trimmed.isBlank() || trimmed.any { it.isWhitespace() }) return false
-            val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return false
+            val uri = runCatching { URI(trimmed) }.getOrNull() ?: return false
             if (!uri.scheme.equals("https", ignoreCase = true)) return false
             if (!uri.userInfo.isNullOrEmpty()) return false
             val host = uri.host?.lowercase() ?: return false
-            if (host.isBlank() || host == "localhost" || host.startsWith("127.") || host.startsWith("10.") || host.startsWith("192.168.")) {
+            if (host.isBlank() || host == "localhost" || host.startsWith("127.") ||
+                host.startsWith("10.") || host.startsWith("192.168.")
+            ) {
                 return false
             }
             return host.contains(".")
         }
 
+        fun isSafeLocalLanBridgeUrl(rawUrl: String): Boolean {
+            val trimmed = rawUrl.trim().trimEnd('/')
+            if (trimmed.isBlank() || trimmed.any { it.isWhitespace() }) return false
+            val uri = runCatching { URI(trimmed) }.getOrNull() ?: return false
+            if (!uri.scheme.equals("http", ignoreCase = true)) return false
+            if (!uri.userInfo.isNullOrEmpty()) return false
+            val host = uri.host?.lowercase() ?: return false
+            return Regex("^192\\.168\\.\\d{1,3}\\.\\d{1,3}$").matches(host) ||
+                Regex("^10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$").matches(host)
+        }
+
         fun normalizeChannelTargetUrl(rawInput: String): String? {
             val trimmed = rawInput.trim()
             if (trimmed.isBlank() || trimmed.any { it.isWhitespace() }) return null
-            if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
-                val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return null
+            if (trimmed.startsWith("http://", ignoreCase = true) ||
+                trimmed.startsWith("https://", ignoreCase = true)
+            ) {
+                val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
                 if (!uri.scheme.equals("https", ignoreCase = true)) return null
                 if (!uri.userInfo.isNullOrEmpty()) return null
                 val host = uri.host?.lowercase()?.trimEnd('.') ?: return null

@@ -9,6 +9,7 @@ import com.example.data.model.DeviceTelemetry
 
 class DeviceTelemetryProvider(private val context: Context) {
 
+    @Suppress("DEPRECATION")
     fun collect(): DeviceTelemetry {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memInfo = ActivityManager.MemoryInfo()
@@ -16,9 +17,19 @@ class DeviceTelemetryProvider(private val context: Context) {
 
         val totalRamMb = memInfo.totalMem / (1024L * 1024L)
         val availableRamMb = memInfo.availMem / (1024L * 1024L)
-        val isLowRam = am.isLowRamDevice || totalRamMb <= 2048L
+        val isLowRam = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            am.isLowRamDevice || totalRamMb <= 2048L
+        } else {
+            totalRamMb <= 2048L
+        }
 
-        val codecs = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+        val codecs: List<MediaCodecInfo> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.toList()
+        } else {
+            val count = MediaCodecList.getCodecCount()
+            (0 until count).map { idx -> MediaCodecList.getCodecInfoAt(idx) }
+        }
+
         val avcDecoders = mutableListOf<String>()
         var hwAvc = false
         var hwVp9 = false
@@ -45,6 +56,15 @@ class DeviceTelemetryProvider(private val context: Context) {
             }
         }
 
+        val abis = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            Build.SUPPORTED_ABIS.joinToString(", ")
+        } else {
+            listOfNotNull(
+                Build.CPU_ABI?.takeIf { it.isNotBlank() },
+                Build.CPU_ABI2?.takeIf { it.isNotBlank() && it != "unknown" }
+            ).joinToString(", ").ifBlank { "armeabi-v7a" }
+        }
+
         val metrics = context.resources.displayMetrics
         val widthDp = (metrics.widthPixels / metrics.density).toInt()
         val heightDp = (metrics.heightPixels / metrics.density).toInt()
@@ -54,7 +74,7 @@ class DeviceTelemetryProvider(private val context: Context) {
             manufacturer = Build.MANUFACTURER ?: "Android",
             androidVersion = Build.VERSION.RELEASE ?: "?",
             apiLevel = Build.VERSION.SDK_INT,
-            supportedAbis = Build.SUPPORTED_ABIS.joinToString(", "),
+            supportedAbis = abis,
             totalRamMb = totalRamMb,
             availableRamMb = availableRamMb,
             isLowRamDevice = isLowRam,

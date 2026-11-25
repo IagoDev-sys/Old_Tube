@@ -1,66 +1,96 @@
 package com.example.data.local
 
 import android.content.Context
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.OptimizationSettings
 import com.example.data.model.PlaybackEngineMode
 import com.example.data.model.QualityPreset
+import com.example.data.remote.YouTubeLegacyNetwork
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
-private val Context.dataStore by preferencesDataStore(name = "oldtube_prefs")
+class OptimizationPreferences(context: Context) {
 
-class OptimizationPreferences(private val context: Context) {
+    private val prefs = context.applicationContext.getSharedPreferences(
+        "oldtube_prefs",
+        Context.MODE_PRIVATE
+    )
 
-    private object Keys {
-        val QUALITY = stringPreferencesKey("quality_preset")
-        val ENGINE = stringPreferencesKey("engine_mode")
-        val LOW_RAM_THUMBS = booleanPreferencesKey("low_ram_thumbs")
-        val CLASSIC_LIGHT = booleanPreferencesKey("classic_light_theme")
-        val BRIDGE_URL = stringPreferencesKey("custom_bridge_url")
-    }
+    private val _settingsFlow = MutableStateFlow(readCurrent())
+    val settingsFlow: Flow<OptimizationSettings> = _settingsFlow.asStateFlow()
 
-    val settingsFlow: Flow<OptimizationSettings> = context.dataStore.data.map { prefs ->
-        val quality = prefs[Keys.QUALITY]
+    private fun readCurrent(): OptimizationSettings {
+        val quality = prefs.getString(KEY_QUALITY, null)
             ?.let { runCatching { QualityPreset.valueOf(it) }.getOrNull() }
             ?: QualityPreset.SD_480P
 
-        val engine = prefs[Keys.ENGINE]
+        val engine = prefs.getString(KEY_ENGINE, null)
             ?.let { runCatching { PlaybackEngineMode.valueOf(it) }.getOrNull() }
             ?: PlaybackEngineMode.HYBRID_AUTO
 
-        OptimizationSettings(
+        val allowLan = prefs.getBoolean(KEY_ALLOW_LAN_BRIDGE, false)
+        val rawBridge = prefs.getString(KEY_BRIDGE_URL, "https://inv.nadeko.net") ?: "https://inv.nadeko.net"
+        val validBridge = if (YouTubeLegacyNetwork.isSafeBridgeUrl(rawBridge) ||
+            (allowLan && YouTubeLegacyNetwork.isSafeLocalLanBridgeUrl(rawBridge))
+        ) {
+            rawBridge
+        } else {
+            "https://inv.nadeko.net"
+        }
+
+        return OptimizationSettings(
             qualityPreset = quality,
             engineMode = engine,
-            lowRamThumbnails = prefs[Keys.LOW_RAM_THUMBS] ?: true,
-            classicLightTheme = prefs[Keys.CLASSIC_LIGHT] ?: true,
-            customBridgeUrl = prefs[Keys.BRIDGE_URL] ?: "https://inv.nadeko.net"
+            lowRamThumbnails = prefs.getBoolean(KEY_LOW_RAM_THUMBS, true),
+            classicLightTheme = prefs.getBoolean(KEY_CLASSIC_LIGHT, true),
+            customBridgeUrl = validBridge,
+            allowLanBridge = allowLan
         )
     }
 
-    suspend fun updateQuality(preset: QualityPreset) {
-        context.dataStore.edit { it[Keys.QUALITY] = preset.name }
+    fun updateQuality(preset: QualityPreset) {
+        prefs.edit().putString(KEY_QUALITY, preset.name).apply()
+        _settingsFlow.value = readCurrent()
     }
 
-    suspend fun updateEngine(mode: PlaybackEngineMode) {
-        context.dataStore.edit { it[Keys.ENGINE] = mode.name }
+    fun updateEngine(mode: PlaybackEngineMode) {
+        prefs.edit().putString(KEY_ENGINE, mode.name).apply()
+        _settingsFlow.value = readCurrent()
     }
 
-    suspend fun updateLowRamThumbnails(enabled: Boolean) {
-        context.dataStore.edit { it[Keys.LOW_RAM_THUMBS] = enabled }
+    fun updateLowRamThumbnails(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_LOW_RAM_THUMBS, enabled).apply()
+        _settingsFlow.value = readCurrent()
     }
 
-    suspend fun updateClassicLightTheme(enabled: Boolean) {
-        context.dataStore.edit { it[Keys.CLASSIC_LIGHT] = enabled }
+    fun updateClassicLightTheme(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_CLASSIC_LIGHT, enabled).apply()
+        _settingsFlow.value = readCurrent()
     }
 
-    suspend fun updateCustomBridgeUrl(url: String) {
+    fun updateAllowLanBridge(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ALLOW_LAN_BRIDGE, enabled).apply()
+        _settingsFlow.value = readCurrent()
+    }
+
+    fun updateCustomBridgeUrl(url: String): Boolean {
         val normalized = url.trim().trimEnd('/')
-        if (com.example.data.remote.YouTubeLegacyNetwork.isSafeBridgeUrl(normalized)) {
-            context.dataStore.edit { it[Keys.BRIDGE_URL] = normalized }
+        val allowLan = prefs.getBoolean(KEY_ALLOW_LAN_BRIDGE, false)
+        val accepted = YouTubeLegacyNetwork.isSafeBridgeUrl(normalized) ||
+            (allowLan && YouTubeLegacyNetwork.isSafeLocalLanBridgeUrl(normalized))
+        if (accepted) {
+            prefs.edit().putString(KEY_BRIDGE_URL, normalized).apply()
+            _settingsFlow.value = readCurrent()
         }
+        return accepted
+    }
+
+    private companion object {
+        const val KEY_QUALITY = "quality_preset"
+        const val KEY_ENGINE = "engine_mode"
+        const val KEY_LOW_RAM_THUMBS = "low_ram_thumbs"
+        const val KEY_CLASSIC_LIGHT = "classic_light_theme"
+        const val KEY_BRIDGE_URL = "custom_bridge_url"
+        const val KEY_ALLOW_LAN_BRIDGE = "allow_lan_bridge"
     }
 }

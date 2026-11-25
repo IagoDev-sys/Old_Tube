@@ -85,7 +85,8 @@ data class OptimizationSettings(
     val engineMode: PlaybackEngineMode = PlaybackEngineMode.HYBRID_AUTO,
     val lowRamThumbnails: Boolean = true,
     val classicLightTheme: Boolean = true,
-    val customBridgeUrl: String = "https://inv.nadeko.net"
+    val customBridgeUrl: String = "https://inv.nadeko.net",
+    val allowLanBridge: Boolean = false
 )
 
 data class DeviceTelemetry(

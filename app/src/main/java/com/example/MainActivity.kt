@@ -1,452 +1,588 @@
 package com.example
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.VideoLibrary
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.VideoLibrary
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.VideoLibrary
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.viewmodel.initializer
-import androidx.lifecycle.viewmodel.viewModelFactory
-import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
-import coil.Coil
-import coil.ImageLoader
-import coil.memory.MemoryCache
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import com.example.classic.ClassicIconType
+import com.example.classic.ClassicVectorIcon
+import com.example.classic.DiagnosticsPanel
+import com.example.classic.FeedPanel
+import com.example.classic.LibraryPanel
+import com.example.classic.OldTubeController
+import com.example.classic.OldTubePalette
+import com.example.classic.PlayerPanel
+import com.example.classic.SearchPanel
+import com.example.classic.dp
+import com.example.classic.makeRoundedCardDrawable
 import com.example.data.local.OptimizationPreferences
-import com.example.data.local.TabTubeDatabase
+import com.example.data.local.TabTubeSqliteStore
+import com.example.data.model.VideoItem
 import com.example.data.remote.YouTubeLegacyNetwork
 import com.example.data.repository.TabTubeRepository
 import com.example.data.telemetry.DeviceTelemetryProvider
-import com.example.ui.FeedUiState
-import com.example.ui.MainViewModel
-import com.example.ui.components.AddChannelDialog
-import com.example.ui.components.GuideNavItem
-import com.example.ui.components.OldTubeGuideSidebar
-import com.example.ui.components.OldTubeTopBar
-import com.example.ui.components.OpenVideoUrlDialog
-import com.example.ui.screens.DiagnosticsScreen
-import com.example.ui.screens.FeedScreen
-import com.example.ui.screens.LibraryScreen
-import com.example.ui.screens.PlayerScreen
-import com.example.ui.screens.SearchScreen
-import com.example.ui.theme.OldTubeTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 
-private const val ROUTE_FEED = "feed"
-private const val ROUTE_SEARCH = "search"
-private const val ROUTE_LIBRARY = "library"
-private const val ROUTE_DIAGNOSTICS = "diagnostics"
-private const val ROUTE_PLAYER = "player"
-
-private data class NavDestination(
-    val route: String,
-    val labelRes: Int,
-    val selectedIcon: ImageVector,
-    val unselectedIcon: ImageVector,
-    val guideIcon: ImageVector,
-    val testTag: String
-)
-
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-
-        // Cap Coil memory cache to 15% of heap for low-RAM devices (Galaxy Tab E 1.5GB)
-        val imageLoader = ImageLoader.Builder(applicationContext)
-            .memoryCache {
-                MemoryCache.Builder(applicationContext)
-                    .maxSizePercent(0.15)
-                    .build()
-            }
-            .crossfade(false)
-            .build()
-        Coil.setImageLoader(imageLoader)
-
-        setContent {
-            val viewModel: MainViewModel = viewModel(
-                factory = viewModelFactory {
-                    initializer {
-                        val app = checkNotNull(this[APPLICATION_KEY]) {
-                            "APPLICATION_KEY missing from CreationExtras"
-                        }
-                        val db = TabTubeDatabase.getInstance(app)
-                        val prefs = OptimizationPreferences(app)
-                        val network = YouTubeLegacyNetwork()
-                        val telemetry = DeviceTelemetryProvider(app)
-                        val repo = TabTubeRepository(db.dao(), prefs, network, telemetry)
-                        MainViewModel(repo)
-                    }
-                }
-            )
-            OldTubeMainShell(viewModel = viewModel)
-        }
-    }
+private enum class AppScreen {
+    FEED, SEARCH, LIBRARY, DIAGNOSTICS, PLAYER
 }
 
-@Composable
-private fun OldTubeMainShell(viewModel: MainViewModel) {
-    val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val channels by viewModel.channels.collectAsStateWithLifecycle()
-    val selectedChannelId by viewModel.selectedChannelId.collectAsStateWithLifecycle()
-    val feedState by viewModel.feedState.collectAsStateWithLifecycle()
-    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
-    val searchState by viewModel.searchState.collectAsStateWithLifecycle()
-    val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
-    val history by viewModel.history.collectAsStateWithLifecycle()
-    val bookmarkedIds by viewModel.bookmarkedIds.collectAsStateWithLifecycle()
-    val followedChannelIds by viewModel.followedChannelIds.collectAsStateWithLifecycle()
-    val playerState by viewModel.playerState.collectAsStateWithLifecycle()
-    val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
-    val pingResults by viewModel.pingResults.collectAsStateWithLifecycle()
-    val isPinging by viewModel.isPinging.collectAsStateWithLifecycle()
-    val statusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
+class MainActivity : Activity() {
 
-    val navController = rememberNavController()
-    val navBackStack by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStack?.destination?.route ?: ROUTE_FEED
+    private lateinit var controller: OldTubeController
+    private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    val snackbarHostState = remember { SnackbarHostState() }
-    var showOpenUrlDialog by remember { mutableStateOf(false) }
-    var showAddChannelDialog by remember { mutableStateOf(false) }
-    var isFullscreen by remember { mutableStateOf(false) }
+    private var currentScreen = AppScreen.FEED
+    private var previousTab = AppScreen.FEED
+    private var isFullscreen = false
 
-    val context = LocalContext.current
+    private lateinit var rootLayout: LinearLayout
+    private lateinit var topBar: LinearLayout
+    private lateinit var contentRow: LinearLayout
+    private lateinit var guideSidebar: ScrollView
+    private lateinit var guideColumn: LinearLayout
+    private lateinit var screenContainer: FrameLayout
+    private lateinit var bottomNav: LinearLayout
 
-    DisposableEffect(isFullscreen, currentRoute) {
-        val window = (context as? Activity)?.window
-        val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
-        if (controller != null) {
-            if (isFullscreen && currentRoute == ROUTE_PLAYER) {
-                controller.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                controller.hide(WindowInsetsCompat.Type.systemBars())
-            } else {
-                controller.show(WindowInsetsCompat.Type.systemBars())
+    private lateinit var feedPanel: FeedPanel
+    private lateinit var searchPanel: SearchPanel
+    private lateinit var libraryPanel: LibraryPanel
+    private lateinit var diagnosticsPanel: DiagnosticsPanel
+    private lateinit var playerPanel: PlayerPanel
+
+    private lateinit var topLinkBtn: TextView
+    private lateinit var topSearchBtn: ImageView
+    private lateinit var topSettingsBtn: ImageView
+    private lateinit var topTitle: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val store = TabTubeSqliteStore.getInstance(applicationContext)
+        val prefs = OptimizationPreferences(applicationContext)
+        val network = YouTubeLegacyNetwork()
+        val telemetry = DeviceTelemetryProvider(applicationContext)
+        val repository = TabTubeRepository(store, prefs, network, telemetry)
+        controller = OldTubeController(repository)
+
+        buildShellUi()
+        setContentView(rootLayout)
+        bindControllerFlows()
+    }
+
+    private fun buildShellUi() {
+        val isWideTablet = resources.configuration.screenWidthDp >= 600
+
+        rootLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        // Classic 2013 YouTube Top Bar
+        topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(6), dp(8), dp(6))
+        }
+        val playBadge = ImageView(this).apply {
+            setImageDrawable(ClassicVectorIcon(ClassicIconType.PLAY_BADGE, Color.WHITE, dp(18)))
+            background = makeRoundedCardDrawable(
+                Color.parseColor("#CC181E"),
+                Color.parseColor("#990000"),
+                dp(4).toFloat(),
+                0
+            )
+            scaleType = ImageView.ScaleType.CENTER
+        }
+        topBar.addView(playBadge, LinearLayout.LayoutParams(dp(34), dp(24)))
+
+        topTitle = TextView(this).apply {
+            text = getString(R.string.app_name)
+            textSize = 18f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(8), 0, 0, 0)
+        }
+        topBar.addView(topTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        topLinkBtn = TextView(this).apply {
+            text = getString(R.string.action_paste_link)
+            textSize = 12f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setOnClickListener { showOpenLinkDialog() }
+        }
+        topBar.addView(topLinkBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(40)))
+
+        topSearchBtn = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER
+            contentDescription = getString(R.string.nav_search)
+            setOnClickListener { navigateTo(AppScreen.SEARCH) }
+        }
+        topBar.addView(topSearchBtn, LinearLayout.LayoutParams(dp(48), dp(48)))
+
+        topSettingsBtn = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER
+            contentDescription = getString(R.string.nav_diagnostics)
+            setOnClickListener { navigateTo(AppScreen.DIAGNOSTICS) }
+        }
+        topBar.addView(topSettingsBtn, LinearLayout.LayoutParams(dp(48), dp(48)))
+
+        rootLayout.addView(
+            topBar,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52))
+        )
+
+        contentRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        guideColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+        }
+        guideSidebar = ScrollView(this).apply {
+            addView(guideColumn)
+            visibility = if (isWideTablet) View.VISIBLE else View.GONE
+        }
+        contentRow.addView(
+            guideSidebar,
+            LinearLayout.LayoutParams(dp(205), LinearLayout.LayoutParams.MATCH_PARENT)
+        )
+
+        screenContainer = FrameLayout(this)
+        contentRow.addView(
+            screenContainer,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+        )
+
+        rootLayout.addView(
+            contentRow,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        )
+
+        bottomNav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = if (isWideTablet) View.GONE else View.VISIBLE
+        }
+        rootLayout.addView(
+            bottomNav,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56))
+        )
+
+        feedPanel = FeedPanel(
+            context = this,
+            isWideTablet = isWideTablet,
+            onSelectChannel = controller::selectChannelFilter,
+            onRemoveChannel = controller::removeChannel,
+            onRefresh = controller::refreshFeed,
+            onOpenAddChannel = { showAddChannelDialog() },
+            onVideoClick = { openVideoInPlayer(it) },
+            onBookmarkToggle = controller::toggleBookmark,
+            onOpenDiagnostics = { navigateTo(AppScreen.DIAGNOSTICS) }
+        )
+        searchPanel = SearchPanel(
+            context = this,
+            onSubmitSearch = { raw ->
+                val id = controller.extractVideoId(raw)
+                val trimmed = raw.trim()
+                if (id != null && (trimmed.contains("http") || trimmed.contains("youtu") || trimmed.length == 11)) {
+                    controller.openVideoById(id, trimmed.contains("/shorts/", ignoreCase = true))
+                    navigateTo(AppScreen.PLAYER)
+                } else {
+                    controller.executeSearch(raw)
+                }
+            },
+            onVideoClick = { openVideoInPlayer(it) },
+            onBookmarkToggle = controller::toggleBookmark
+        )
+        libraryPanel = LibraryPanel(
+            context = this,
+            onVideoClick = { openVideoInPlayer(it) },
+            onBookmarkToggle = controller::toggleBookmark,
+            onClearHistory = controller::clearWatchHistory
+        )
+        diagnosticsPanel = DiagnosticsPanel(
+            context = this,
+            onRefreshTelemetry = controller::refreshTelemetry,
+            onQualitySelected = controller::updateQuality,
+            onEngineSelected = controller::updateEngine,
+            onLowRamChanged = controller::updateLowRamThumbnails,
+            onClassicThemeChanged = controller::updateClassicLightTheme,
+            onAllowLanBridgeChanged = controller::updateAllowLanBridge,
+            onSaveBridgeUrl = controller::updateCustomBridgeUrl,
+            onRunBridgePing = controller::runBridgeDiagnostics
+        )
+        playerPanel = PlayerPanel(
+            context = this,
+            onBack = { handleBackNavigation() },
+            onSetFullscreen = { fs ->
+                isFullscreen = fs
+                applyFullscreenWindowFlags(fs)
+                renderCurrentState()
+            },
+            onSwitchBackend = controller::switchPlayerBackend,
+            onPositionChanged = controller::savePlaybackPosition,
+            onBookmarkToggle = controller::toggleBookmark,
+            onToggleSubscribe = controller::toggleChannelSubscription,
+            onSelectRelated = { video -> controller.openVideo(video) },
+            onRetryVideo = { id -> controller.openVideoById(id) }
+        )
+
+        screenContainer.addView(feedPanel.root)
+        screenContainer.addView(searchPanel.root)
+        screenContainer.addView(libraryPanel.root)
+        screenContainer.addView(diagnosticsPanel.root)
+        screenContainer.addView(playerPanel.root)
+        updateScreenVisibility()
+    }
+
+    private fun bindControllerFlows() {
+        uiScope.launch {
+            controller.statusMessage.collect { msg ->
+                if (msg != null) {
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                    controller.consumeStatusMessage()
+                }
             }
         }
-        onDispose {
-            controller?.show(WindowInsetsCompat.Type.systemBars())
+
+        uiScope.launch {
+            combine(
+                controller.settings,
+                controller.channels,
+                controller.selectedChannelId,
+                controller.feedState,
+                controller.bookmarkedIds
+            ) { _, _, _, _, _ -> Unit }.collect {
+                renderCurrentState()
+            }
+        }
+
+        uiScope.launch {
+            combine(
+                controller.searchQuery,
+                controller.searchState,
+                controller.bookmarks,
+                controller.history,
+                controller.playerState
+            ) { _, _, _, _, _ -> Unit }.collect {
+                renderCurrentState()
+            }
+        }
+
+        uiScope.launch {
+            combine(
+                controller.telemetry,
+                controller.pingResults,
+                controller.isPinging,
+                controller.followedChannelIds
+            ) { _, _, _, _ -> Unit }.collect {
+                renderCurrentState()
+            }
         }
     }
 
-    LaunchedEffect(statusMessage) {
-        val msg = statusMessage
-        if (msg != null) {
-            snackbarHostState.showSnackbar(msg)
-            viewModel.consumeStatusMessage()
-        }
-    }
+    private fun renderCurrentState() {
+        val settings = controller.settings.value
+        val channels = controller.channels.value
+        val selectedChannelId = controller.selectedChannelId.value
+        val bookmarkedIds = controller.bookmarkedIds.value
+        val followedIds = controller.followedChannelIds.value
+        val palette = OldTubePalette.from(settings.classicLightTheme)
 
-    val destinations = remember {
-        listOf(
-            NavDestination(
-                route = ROUTE_FEED,
-                labelRes = R.string.nav_feed,
-                selectedIcon = Icons.Filled.Home,
-                unselectedIcon = Icons.Outlined.Home,
-                guideIcon = Icons.Rounded.Home,
-                testTag = "nav_feed"
-            ),
-            NavDestination(
-                route = ROUTE_SEARCH,
-                labelRes = R.string.nav_search,
-                selectedIcon = Icons.Filled.Search,
-                unselectedIcon = Icons.Outlined.Search,
-                guideIcon = Icons.Rounded.Search,
-                testTag = "nav_search"
-            ),
-            NavDestination(
-                route = ROUTE_LIBRARY,
-                labelRes = R.string.nav_library,
-                selectedIcon = Icons.Filled.VideoLibrary,
-                unselectedIcon = Icons.Outlined.VideoLibrary,
-                guideIcon = Icons.Rounded.VideoLibrary,
-                testTag = "nav_library"
-            ),
-            NavDestination(
-                route = ROUTE_DIAGNOSTICS,
-                labelRes = R.string.nav_diagnostics,
-                selectedIcon = Icons.Filled.Tune,
-                unselectedIcon = Icons.Outlined.Tune,
-                guideIcon = Icons.Rounded.Tune,
-                testTag = "nav_diagnostics"
-            )
+        val showChrome = !(currentScreen == AppScreen.PLAYER && isFullscreen)
+        val isWideTablet = resources.configuration.screenWidthDp >= 600
+        topBar.visibility = if (showChrome && currentScreen != AppScreen.PLAYER) View.VISIBLE else View.GONE
+        guideSidebar.visibility = if (showChrome && isWideTablet && currentScreen != AppScreen.PLAYER) View.VISIBLE else View.GONE
+        bottomNav.visibility = if (showChrome && !isWideTablet && currentScreen != AppScreen.PLAYER) View.VISIBLE else View.GONE
+
+        topBar.setBackgroundColor(palette.surface)
+        topTitle.setTextColor(palette.textPrimary)
+        topLinkBtn.setTextColor(palette.textPrimary)
+        topLinkBtn.background = makeRoundedCardDrawable(palette.surfaceVariant, palette.border, dp(4).toFloat())
+        topSearchBtn.setImageDrawable(ClassicVectorIcon(ClassicIconType.SEARCH, palette.textPrimary, dp(20)))
+        topSettingsBtn.setImageDrawable(ClassicVectorIcon(ClassicIconType.TUNE, palette.textPrimary, dp(20)))
+
+        rebuildNavigationChrome(palette, channels, selectedChannelId)
+
+        feedPanel.render(
+            feedState = controller.feedState.value,
+            channels = channels,
+            selectedChannelId = selectedChannelId,
+            bookmarkedIds = bookmarkedIds,
+            settings = settings,
+            telemetry = controller.telemetry.value
+        )
+        searchPanel.render(
+            query = controller.searchQuery.value,
+            searchState = controller.searchState.value,
+            bookmarkedIds = bookmarkedIds,
+            settings = settings
+        )
+        libraryPanel.render(
+            bookmarks = controller.bookmarks.value,
+            history = controller.history.value,
+            bookmarkedIds = bookmarkedIds,
+            settings = settings
+        )
+        diagnosticsPanel.render(
+            telemetry = controller.telemetry.value,
+            settings = settings,
+            pingResults = controller.pingResults.value,
+            isPinging = controller.isPinging.value
+        )
+        val related = (controller.feedState.value as? com.example.classic.FeedUiState.Success)?.videos.orEmpty()
+        playerPanel.render(
+            playerState = controller.playerState.value,
+            relatedVideos = related,
+            bookmarkedIds = bookmarkedIds,
+            followedChannelIds = followedIds,
+            isFullscreen = isFullscreen,
+            settings = settings
         )
     }
 
-    val navigateTab: (String) -> Unit = { route ->
-        isFullscreen = false
-        navController.navigate(route) {
-            popUpTo(navController.graph.findStartDestination().id) {
-                saveState = true
+    private fun rebuildNavigationChrome(
+        palette: OldTubePalette,
+        channels: List<com.example.data.local.ChannelEntity>,
+        selectedChannelId: String?
+    ) {
+        val navItems = listOf(
+            Triple(AppScreen.FEED, getString(R.string.nav_feed), ClassicIconType.HOME),
+            Triple(AppScreen.SEARCH, getString(R.string.nav_search), ClassicIconType.SEARCH),
+            Triple(AppScreen.LIBRARY, getString(R.string.nav_library), ClassicIconType.LIBRARY),
+            Triple(AppScreen.DIAGNOSTICS, getString(R.string.nav_diagnostics), ClassicIconType.TUNE)
+        )
+
+        bottomNav.setBackgroundColor(palette.surface)
+        bottomNav.removeAllViews()
+        for ((screen, label, icon) in navItems) {
+            val active = currentScreen == screen
+            val tab = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(4), dp(6), dp(4), dp(6))
+                setOnClickListener { navigateTo(screen) }
             }
-            launchSingleTop = true
-            restoreState = true
-        }
-    }
-
-    val openPlayerRoute: () -> Unit = {
-        isFullscreen = false
-        if (currentRoute != ROUTE_PLAYER) {
-            navController.navigate(ROUTE_PLAYER) {
-                launchSingleTop = true
+            val iv = ImageView(this).apply {
+                setImageDrawable(
+                    ClassicVectorIcon(
+                        icon,
+                        if (active) palette.crimson else palette.textSecondary,
+                        dp(20)
+                    )
+                )
             }
+            val tv = TextView(this).apply {
+                text = label
+                textSize = 11f
+                maxLines = 1
+                if (active) setTypeface(typeface, Typeface.BOLD)
+                setTextColor(if (active) palette.crimson else palette.textSecondary)
+            }
+            tab.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
+            tab.addView(tv)
+            bottomNav.addView(tab, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
         }
-    }
 
-    OldTubeTheme(classicLightTheme = settings.classicLightTheme) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val useGuideSidebar = maxWidth >= 600.dp
-            val showChrome = !(currentRoute == ROUTE_PLAYER && isFullscreen)
-
-            Scaffold(
-                modifier = Modifier.fillMaxSize(),
-                containerColor = MaterialTheme.colorScheme.background,
-                contentWindowInsets = if (showChrome) WindowInsets.safeDrawing else WindowInsets(0),
-                snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-                topBar = {
-                    if (showChrome && currentRoute != ROUTE_PLAYER) {
-                        OldTubeTopBar(
-                            isDarkSurface = !settings.classicLightTheme,
-                            onSearchClick = { navigateTab(ROUTE_SEARCH) },
-                            onPasteLinkClick = { showOpenUrlDialog = true },
-                            onSettingsClick = { navigateTab(ROUTE_DIAGNOSTICS) }
-                        )
-                    }
+        guideSidebar.setBackgroundColor(palette.surface)
+        guideColumn.removeAllViews()
+        for ((screen, label, icon) in navItems) {
+            val active = currentScreen == screen
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = makeRoundedCardDrawable(
+                    if (active) palette.crimson else palette.surface,
+                    if (active) palette.crimsonDark else Color.TRANSPARENT,
+                    dp(3).toFloat(),
+                    0
+                )
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = dp(4) }
+                setOnClickListener {
+                    if (screen == AppScreen.FEED) controller.selectChannelFilter(null)
+                    navigateTo(screen)
+                }
+            }
+            row.addView(
+                ImageView(this).apply {
+                    setImageDrawable(
+                        ClassicVectorIcon(icon, if (active) Color.WHITE else palette.textSecondary, dp(18))
+                    )
                 },
-                bottomBar = {
-                    if (showChrome && !useGuideSidebar && currentRoute != ROUTE_PLAYER) {
-                        NavigationBar(
-                            windowInsets = WindowInsets.navigationBars,
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ) {
-                            destinations.forEach { dest ->
-                                val selected = currentRoute == dest.route
-                                NavigationBarItem(
-                                    selected = selected,
-                                    onClick = { navigateTab(dest.route) },
-                                    icon = {
-                                        Icon(
-                                            imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
-                                            contentDescription = stringResource(dest.labelRes)
-                                        )
-                                    },
-                                    label = { Text(stringResource(dest.labelRes)) },
-                                    modifier = Modifier.testTag(dest.testTag)
-                                )
-                            }
-                        }
-                    }
+                LinearLayout.LayoutParams(dp(20), dp(20)).apply { rightMargin = dp(10) }
+            )
+            row.addView(
+                TextView(this).apply {
+                    text = label
+                    textSize = 13f
+                    if (active) setTypeface(typeface, Typeface.BOLD)
+                    setTextColor(if (active) Color.WHITE else palette.textPrimary)
                 }
-            ) { innerPadding ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                ) {
-                    if (showChrome && useGuideSidebar && currentRoute != ROUTE_PLAYER) {
-                        val guideItems = destinations.map { d ->
-                            GuideNavItem(
-                                route = d.route,
-                                label = stringResource(d.labelRes),
-                                icon = d.guideIcon,
-                                testTag = d.testTag
-                            )
-                        }
-                        OldTubeGuideSidebar(
-                            navItems = guideItems,
-                            currentRoute = currentRoute,
-                            channels = channels,
-                            selectedChannelId = selectedChannelId,
-                            onNavigate = { route ->
-                                if (route == ROUTE_FEED) {
-                                    viewModel.selectChannelFilter(null)
-                                }
-                                navigateTab(route)
-                            },
-                            onSelectChannel = { channelId ->
-                                viewModel.selectChannelFilter(channelId)
-                                navigateTab(ROUTE_FEED)
-                            }
-                        )
-                    }
-
-                    Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                        NavHost(
-                            navController = navController,
-                            startDestination = ROUTE_FEED
-                        ) {
-                            composable(ROUTE_FEED) {
-                                FeedScreen(
-                                    feedState = feedState,
-                                    channels = channels,
-                                    selectedChannelId = selectedChannelId,
-                                    bookmarkedIds = bookmarkedIds,
-                                    settings = settings,
-                                    telemetry = telemetry,
-                                    onSelectChannel = viewModel::selectChannelFilter,
-                                    onRemoveChannel = viewModel::removeChannel,
-                                    onRefresh = viewModel::refreshFeed,
-                                    onOpenAddChannelDialog = { showAddChannelDialog = true },
-                                    onVideoClick = { video ->
-                                        viewModel.openVideo(video)
-                                        openPlayerRoute()
-                                    },
-                                    onBookmarkToggle = viewModel::toggleBookmark,
-                                    onOpenDiagnostics = { navigateTab(ROUTE_DIAGNOSTICS) }
-                                )
-                            }
-
-                            composable(ROUTE_SEARCH) {
-                                SearchScreen(
-                                    query = searchQuery,
-                                    searchState = searchState,
-                                    bookmarkedIds = bookmarkedIds,
-                                    settings = settings,
-                                    onQueryChange = viewModel::updateSearchQuery,
-                                    onSearchSubmit = { explicit ->
-                                        val potentialId = viewModel.extractVideoId(explicit ?: searchQuery)
-                                        val raw = (explicit ?: searchQuery).trim()
-                                        if (potentialId != null && (raw.contains("http") || raw.contains("youtu") || raw.length == 11)) {
-                                            viewModel.openVideoById(potentialId, raw.contains("/shorts/", ignoreCase = true))
-                                            openPlayerRoute()
-                                        } else {
-                                            viewModel.executeSearch(explicit)
-                                        }
-                                    },
-                                    onVideoClick = { video ->
-                                        viewModel.openVideo(video)
-                                        openPlayerRoute()
-                                    },
-                                    onBookmarkToggle = viewModel::toggleBookmark
-                                )
-                            }
-
-                            composable(ROUTE_LIBRARY) {
-                                LibraryScreen(
-                                    bookmarks = bookmarks,
-                                    history = history,
-                                    bookmarkedIds = bookmarkedIds,
-                                    settings = settings,
-                                    onVideoClick = { video ->
-                                        viewModel.openVideo(video)
-                                        openPlayerRoute()
-                                    },
-                                    onBookmarkToggle = viewModel::toggleBookmark,
-                                    onClearHistory = viewModel::clearWatchHistory
-                                )
-                            }
-
-                            composable(ROUTE_DIAGNOSTICS) {
-                                DiagnosticsScreen(
-                                    telemetry = telemetry,
-                                    settings = settings,
-                                    pingResults = pingResults,
-                                    isPinging = isPinging,
-                                    onRefreshTelemetry = viewModel::refreshTelemetry,
-                                    onQualitySelected = viewModel::updateQuality,
-                                    onEngineSelected = viewModel::updateEngine,
-                                    onLowRamThumbnailsChanged = viewModel::updateLowRamThumbnails,
-                                    onClassicLightThemeChanged = viewModel::updateClassicLightTheme,
-                                    onSaveBridgeUrl = viewModel::updateCustomBridgeUrl,
-                                    onRunBridgePing = viewModel::runBridgeDiagnostics
-                                )
-                            }
-
-                            composable(ROUTE_PLAYER) {
-                                val related = (feedState as? FeedUiState.Success)?.videos.orEmpty()
-                                PlayerScreen(
-                                    playerState = playerState,
-                                    relatedVideos = related,
-                                    bookmarkedIds = bookmarkedIds,
-                                    followedChannelIds = followedChannelIds,
-                                    isFullscreen = isFullscreen,
-                                    onSetFullscreen = { isFullscreen = it },
-                                    onBack = {
-                                        isFullscreen = false
-                                        navController.popBackStack()
-                                    },
-                                    onSwitchBackend = viewModel::switchPlayerBackend,
-                                    onPositionChanged = viewModel::savePlaybackPosition,
-                                    onBookmarkToggle = viewModel::toggleBookmark,
-                                    onToggleSubscribe = viewModel::toggleChannelSubscription,
-                                    onSelectRelated = { video -> viewModel.openVideo(video) },
-                                    onRetryVideo = { id -> viewModel.openVideoById(id) }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (showOpenUrlDialog) {
-                OpenVideoUrlDialog(
-                    onDismiss = { showOpenUrlDialog = false },
-                    onOpenVideo = { raw ->
-                        val ok = viewModel.openVideoByInput(raw)
-                        if (ok) openPlayerRoute()
-                        ok
-                    }
-                )
-            }
-
-            if (showAddChannelDialog) {
-                AddChannelDialog(
-                    onDismiss = { showAddChannelDialog = false },
-                    onAddChannel = viewModel::addChannel
-                )
-            }
+            )
+            guideColumn.addView(row)
         }
+
+        val chTitle = TextView(this).apply {
+            text = "MEUS CANAIS (RSS)"
+            textSize = 11f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(palette.crimson)
+            setPadding(dp(8), dp(14), dp(8), dp(6))
+        }
+        guideColumn.addView(chTitle)
+
+        for (channel in channels) {
+            val active = selectedChannelId == channel.channelId && currentScreen == AppScreen.FEED
+            val chRow = TextView(this).apply {
+                text = "• ${channel.name}"
+                textSize = 13f
+                if (active) setTypeface(typeface, Typeface.BOLD)
+                setTextColor(if (active) palette.crimson else palette.textPrimary)
+                setPadding(dp(10), dp(8), dp(8), dp(8))
+                setOnClickListener {
+                    controller.selectChannelFilter(channel.channelId)
+                    navigateTo(AppScreen.FEED)
+                }
+            }
+            guideColumn.addView(chRow)
+        }
+    }
+
+    private fun openVideoInPlayer(video: VideoItem) {
+        controller.openVideo(video)
+        navigateTo(AppScreen.PLAYER)
+    }
+
+    private fun navigateTo(target: AppScreen) {
+        if (currentScreen == AppScreen.PLAYER && target != AppScreen.PLAYER) {
+            playerPanel.release()
+            isFullscreen = false
+            applyFullscreenWindowFlags(false)
+        }
+        if (target != AppScreen.PLAYER) {
+            previousTab = target
+        }
+        currentScreen = target
+        updateScreenVisibility()
+        renderCurrentState()
+    }
+
+    private fun updateScreenVisibility() {
+        feedPanel.root.visibility = if (currentScreen == AppScreen.FEED) View.VISIBLE else View.GONE
+        searchPanel.root.visibility = if (currentScreen == AppScreen.SEARCH) View.VISIBLE else View.GONE
+        libraryPanel.root.visibility = if (currentScreen == AppScreen.LIBRARY) View.VISIBLE else View.GONE
+        diagnosticsPanel.root.visibility = if (currentScreen == AppScreen.DIAGNOSTICS) View.VISIBLE else View.GONE
+        playerPanel.root.visibility = if (currentScreen == AppScreen.PLAYER) View.VISIBLE else View.GONE
+    }
+
+    private fun handleBackNavigation(): Boolean {
+        if (currentScreen == AppScreen.PLAYER) {
+            if (isFullscreen) {
+                isFullscreen = false
+                applyFullscreenWindowFlags(false)
+                renderCurrentState()
+                return true
+            }
+            navigateTo(previousTab)
+            return true
+        }
+        if (currentScreen != AppScreen.FEED) {
+            navigateTo(AppScreen.FEED)
+            return true
+        }
+        return false
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (!handleBackNavigation()) {
+            super.onBackPressed()
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        renderCurrentState()
+    }
+
+    override fun onDestroy() {
+        playerPanel.release()
+        controller.release()
+        uiScope.cancel()
+        super.onDestroy()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun applyFullscreenWindowFlags(fullscreen: Boolean) {
+        if (fullscreen) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                )
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+        }
+    }
+
+    private fun showOpenLinkDialog() {
+        val input = EditText(this).apply {
+            hint = "https://youtube.com/watch?v=... ou Shorts"
+            isSingleLine = true
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Abrir vídeo por link ou ID")
+            .setView(input)
+            .setPositiveButton("Assistir") { _, _ ->
+                if (controller.openVideoByInput(input.text.toString())) {
+                    navigateTo(AppScreen.PLAYER)
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun showAddChannelDialog() {
+        val input = EditText(this).apply {
+            hint = "@canal, link do YouTube ou ID UC..."
+            isSingleLine = true
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Adicionar canal ao feed RSS")
+            .setView(input)
+            .setPositiveButton("Adicionar") { _, _ ->
+                controller.addChannel(input.text.toString()) { ok, msg ->
+                    if (!ok) {
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
     }
 }

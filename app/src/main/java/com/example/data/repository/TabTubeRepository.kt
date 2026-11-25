@@ -3,8 +3,7 @@ package com.example.data.repository
 import com.example.data.local.ChannelEntity
 import com.example.data.local.OptimizationPreferences
 import com.example.data.local.SavedVideoEntity
-import com.example.data.local.TabTubeDao
-import com.example.data.local.TabTubeDatabase
+import com.example.data.local.TabTubeSqliteStore
 import com.example.data.model.BridgePingResult
 import com.example.data.model.DeviceTelemetry
 import com.example.data.model.OptimizationSettings
@@ -12,25 +11,27 @@ import com.example.data.model.PlaybackEngineMode
 import com.example.data.model.QualityPreset
 import com.example.data.model.ResolvedStream
 import com.example.data.model.VideoItem
+import com.example.data.remote.LocalTlsStreamProxy
 import com.example.data.remote.YouTubeLegacyNetwork
 import com.example.data.telemetry.DeviceTelemetryProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
 class TabTubeRepository(
-    private val dao: TabTubeDao,
+    private val store: TabTubeSqliteStore,
     private val preferences: OptimizationPreferences,
     private val network: YouTubeLegacyNetwork,
-    private val telemetryProvider: DeviceTelemetryProvider
+    private val telemetryProvider: DeviceTelemetryProvider,
+    private val localProxy: LocalTlsStreamProxy = LocalTlsStreamProxy()
 ) {
     val settingsFlow: Flow<OptimizationSettings> = preferences.settingsFlow
-    val channelsFlow: Flow<List<ChannelEntity>> = dao.observeChannels()
-    val bookmarksFlow: Flow<List<SavedVideoEntity>> = dao.observeBookmarks()
-    val historyFlow: Flow<List<SavedVideoEntity>> = dao.observeHistory()
+    val channelsFlow: Flow<List<ChannelEntity>> = store.observeChannels()
+    val bookmarksFlow: Flow<List<SavedVideoEntity>> = store.observeBookmarks()
+    val historyFlow: Flow<List<SavedVideoEntity>> = store.observeHistory()
 
-    suspend fun ensureSeedChannels() {
-        if (dao.getChannelsOnce().isEmpty()) {
-            dao.insertChannels(TabTubeDatabase.DEFAULT_CHANNELS)
+    fun ensureSeedChannels() {
+        if (store.getChannelsOnce().isEmpty()) {
+            store.insertChannels(TabTubeSqliteStore.DEFAULT_CHANNELS)
         }
     }
 
@@ -40,14 +41,19 @@ class TabTubeRepository(
         val ids = if (channelFilterId != null) {
             listOf(channelFilterId)
         } else {
-            dao.getChannelsOnce().map { it.channelId }
+            store.getChannelsOnce().map { it.channelId }
         }
         return network.fetchChannelFeeds(ids, settings.lowRamThumbnails)
     }
 
     suspend fun search(query: String): List<VideoItem> {
         val settings = settingsFlow.first()
-        return network.searchVideos(query, settings.lowRamThumbnails, settings.customBridgeUrl)
+        return network.searchVideos(
+            query = query,
+            lowRamThumbnails = settings.lowRamThumbnails,
+            customBridgeUrl = settings.customBridgeUrl,
+            allowLanBridge = settings.allowLanBridge
+        )
     }
 
     fun extractVideoId(input: String): String? = network.extractVideoId(input)
@@ -62,13 +68,13 @@ class TabTubeRepository(
             name = resolved.second,
             category = "Personalizado"
         )
-        dao.insertChannel(entity)
+        store.insertChannel(entity)
         return Result.success(entity)
     }
 
-    suspend fun subscribeToChannel(channelId: String, channelName: String) {
+    fun subscribeToChannel(channelId: String, channelName: String) {
         if (channelId.isBlank()) return
-        dao.insertChannel(
+        store.insertChannel(
             ChannelEntity(
                 channelId = channelId,
                 name = channelName.ifBlank { "Canal" },
@@ -77,8 +83,8 @@ class TabTubeRepository(
         )
     }
 
-    suspend fun removeChannel(channelId: String) {
-        dao.deleteChannel(channelId)
+    fun removeChannel(channelId: String) {
+        store.deleteChannel(channelId)
     }
 
     suspend fun resolveStream(
@@ -87,16 +93,23 @@ class TabTubeRepository(
         isShort: Boolean = false
     ): ResolvedStream {
         val settings = settingsFlow.first()
-        return network.resolvePlayableStream(videoId, knownVideo, settings, isShort)
+        val resolved = network.resolvePlayableStream(videoId, knownVideo, settings, isShort)
+        val direct = resolved.directH264Url
+        return if (!direct.isNullOrBlank()) {
+            val proxied = localProxy.registerStreamUrl(direct)
+            resolved.copy(directH264Url = proxied)
+        } else {
+            resolved
+        }
     }
 
-    suspend fun recordWatchStart(video: VideoItem): Long {
-        val existing = dao.getSavedVideo(video.id)
+    fun recordWatchStart(video: VideoItem): Long {
+        val existing = store.getSavedVideo(video.id)
         val now = System.currentTimeMillis()
         val thumb = video.thumbnailUrl.ifBlank {
             "https://i.ytimg.com/vi/${video.id}/hqdefault.jpg"
         }
-        dao.upsertSavedVideo(
+        store.upsertSavedVideo(
             SavedVideoEntity(
                 videoId = video.id,
                 title = video.title,
@@ -113,9 +126,9 @@ class TabTubeRepository(
         return existing?.lastPositionMs ?: 0L
     }
 
-    suspend fun updateWatchPosition(videoId: String, positionMs: Long) {
-        val existing = dao.getSavedVideo(videoId) ?: return
-        dao.upsertSavedVideo(
+    fun updateWatchPosition(videoId: String, positionMs: Long) {
+        val existing = store.getSavedVideo(videoId) ?: return
+        store.upsertSavedVideo(
             existing.copy(
                 lastPlayedAt = System.currentTimeMillis(),
                 lastPositionMs = positionMs.coerceAtLeast(0L)
@@ -123,15 +136,15 @@ class TabTubeRepository(
         )
     }
 
-    suspend fun toggleBookmark(video: VideoItem) {
-        val existing = dao.getSavedVideo(video.id)
+    fun toggleBookmark(video: VideoItem) {
+        val existing = store.getSavedVideo(video.id)
         val thumb = video.thumbnailUrl.ifBlank {
             "https://i.ytimg.com/vi/${video.id}/hqdefault.jpg"
         }
         if (existing != null) {
-            dao.upsertSavedVideo(existing.copy(isBookmarked = !existing.isBookmarked))
+            store.upsertSavedVideo(existing.copy(isBookmarked = !existing.isBookmarked))
         } else {
-            dao.upsertSavedVideo(
+            store.upsertSavedVideo(
                 SavedVideoEntity(
                     videoId = video.id,
                     title = video.title,
@@ -148,18 +161,21 @@ class TabTubeRepository(
         }
     }
 
-    suspend fun clearWatchHistory() = dao.clearWatchHistory()
+    fun clearWatchHistory() = store.clearWatchHistory()
 
     fun collectTelemetry(): DeviceTelemetry = telemetryProvider.collect()
 
     suspend fun pingBridges(): List<BridgePingResult> {
         val settings = settingsFlow.first()
-        return network.pingBridgeInstances(settings.customBridgeUrl)
+        return network.pingBridgeInstances(settings.customBridgeUrl, settings.allowLanBridge)
     }
 
-    suspend fun updateQuality(preset: QualityPreset) = preferences.updateQuality(preset)
-    suspend fun updateEngine(mode: PlaybackEngineMode) = preferences.updateEngine(mode)
-    suspend fun updateLowRamThumbnails(enabled: Boolean) = preferences.updateLowRamThumbnails(enabled)
-    suspend fun updateClassicLightTheme(enabled: Boolean) = preferences.updateClassicLightTheme(enabled)
-    suspend fun updateCustomBridgeUrl(url: String) = preferences.updateCustomBridgeUrl(url)
+    fun updateQuality(preset: QualityPreset) = preferences.updateQuality(preset)
+    fun updateEngine(mode: PlaybackEngineMode) = preferences.updateEngine(mode)
+    fun updateLowRamThumbnails(enabled: Boolean) = preferences.updateLowRamThumbnails(enabled)
+    fun updateClassicLightTheme(enabled: Boolean) = preferences.updateClassicLightTheme(enabled)
+    fun updateAllowLanBridge(enabled: Boolean) = preferences.updateAllowLanBridge(enabled)
+    fun updateCustomBridgeUrl(url: String): Boolean = preferences.updateCustomBridgeUrl(url)
+
+    fun releaseProxy() = localProxy.stop()
 }

@@ -77,4 +77,32 @@ class SecurityAndInputValidationTest {
         assertNull(YouTubeLegacyNetwork.normalizeChannelTargetUrl("https://evil.com/@ManualdoMundo"))
         assertNull(YouTubeLegacyNetwork.normalizeChannelTargetUrl("bad handle with spaces"))
     }
+
+    @Test
+    fun lanBridgeAndHttpClientPolicy_blocksPublicCleartextAndAllowsPrivateLanOnlyWhenOptedIn() {
+        assertTrue(YouTubeLegacyNetwork.isSafeLocalLanBridgeUrl("http://192.168.1.25:8787"))
+        assertTrue(YouTubeLegacyNetwork.isSafeLocalLanBridgeUrl("http://10.0.0.5:8787"))
+        assertFalse(YouTubeLegacyNetwork.isSafeLocalLanBridgeUrl("http://127.0.0.1:8787"))
+        assertFalse(YouTubeLegacyNetwork.isSafeLocalLanBridgeUrl("http://example.com:8787"))
+        assertFalse(YouTubeLegacyNetwork.isSafeLocalLanBridgeUrl("http://user:pass@192.168.1.25:8787"))
+
+        assertFalse(
+            com.example.data.remote.KitKatHttpClient.isPermittedTargetUrl(
+                "http://192.168.1.25:8787/api/v1/stats",
+                allowPrivateLanHttp = false
+            )
+        )
+        assertTrue(
+            com.example.data.remote.KitKatHttpClient.isPermittedTargetUrl(
+                "http://192.168.1.25:8787/api/v1/stats",
+                allowPrivateLanHttp = true
+            )
+        )
+        assertFalse(
+            com.example.data.remote.KitKatHttpClient.isPermittedTargetUrl(
+                "http://youtube.com/watch?v=dQw4w9WgXcQ",
+                allowPrivateLanHttp = true
+            )
+        )
+    }
 }
