@@ -1,0 +1,648 @@
+package com.example.data.remote
+
+import android.util.Xml
+import com.example.data.model.BridgePingResult
+import com.example.data.model.OptimizationSettings
+import com.example.data.model.PlaybackEngineMode
+import com.example.data.model.ResolvedStream
+import com.example.data.model.VideoItem
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import okhttp3.ConnectionPool
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONArray
+import org.json.JSONObject
+import org.xmlpull.v1.XmlPullParser
+import java.io.StringReader
+import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
+
+class YouTubeLegacyNetwork {
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(7, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
+        .followRedirects(true)
+        .build()
+
+    private val defaultBridges = listOf(
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.adminforge.de",
+        "https://api.piped.private.coffee",
+        "https://inv.nadeko.net",
+        "https://yewtu.be"
+    )
+
+    fun extractVideoId(input: String): String? {
+        val trimmed = input.trim()
+        if (Regex("^[A-Za-z0-9_-]{11}$").matches(trimmed)) {
+            return trimmed
+        }
+        val patterns = listOf(
+            Regex("[?&]v=([A-Za-z0-9_-]{11})"),
+            Regex("youtu\\.be/([A-Za-z0-9_-]{11})"),
+            Regex("youtube\\.com/shorts/([A-Za-z0-9_-]{11})"),
+            Regex("youtube\\.com/embed/([A-Za-z0-9_-]{11})"),
+            Regex("youtube\\.com/live/([A-Za-z0-9_-]{11})")
+        )
+        for (pattern in patterns) {
+            val match = pattern.find(trimmed)
+            if (match != null) return match.groupValues[1]
+        }
+        return null
+    }
+
+    fun buildThumbnailUrl(videoId: String, lowRamThumbnails: Boolean): String {
+        val quality = if (lowRamThumbnails) "mqdefault" else "hqdefault"
+        return "https://i.ytimg.com/vi/$videoId/$quality.jpg"
+    }
+
+    suspend fun fetchChannelFeeds(
+        channelIds: List<String>,
+        lowRamThumbnails: Boolean
+    ): List<VideoItem> = coroutineScope {
+        if (channelIds.isEmpty()) return@coroutineScope emptyList()
+        val deferred = channelIds.map { channelId ->
+            async(Dispatchers.IO) {
+                runCatching { fetchSingleChannelFeed(channelId, lowRamThumbnails) }
+                    .getOrDefault(emptyList())
+            }
+        }
+        deferred.awaitAll()
+            .flatten()
+            .sortedByDescending { it.publishedAt }
+    }
+
+    private fun fetchSingleChannelFeed(
+        channelId: String,
+        lowRamThumbnails: Boolean
+    ): List<VideoItem> {
+        val url = "https://www.youtube.com/feeds/videos.xml?channel_id=$channelId"
+        val body = httpGet(url) ?: return emptyList()
+        return parseAtomFeed(body, lowRamThumbnails)
+    }
+
+    private fun parseAtomFeed(xml: String, lowRamThumbnails: Boolean): List<VideoItem> {
+        val videos = mutableListOf<VideoItem>()
+        val parser = Xml.newPullParser()
+        parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+        parser.setInput(StringReader(xml))
+
+        var eventType = parser.eventType
+        var insideEntry = false
+        var insideAuthor = false
+        var currentTag = ""
+
+        var videoId = ""
+        var title = ""
+        var authorName = ""
+        var channelId = ""
+        var published = ""
+        var description = ""
+        var views = ""
+
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            when (eventType) {
+                XmlPullParser.START_TAG -> {
+                    currentTag = parser.name
+                    when (currentTag) {
+                        "entry" -> {
+                            insideEntry = true
+                            videoId = ""
+                            title = ""
+                            authorName = ""
+                            channelId = ""
+                            published = ""
+                            description = ""
+                            views = ""
+                        }
+                        "author" -> if (insideEntry) insideAuthor = true
+                        "media:statistics" -> if (insideEntry) {
+                            views = parser.getAttributeValue(null, "views") ?: ""
+                        }
+                    }
+                }
+                XmlPullParser.TEXT -> {
+                    val text = parser.text ?: ""
+                    if (insideEntry && text.isNotBlank()) {
+                        when (currentTag) {
+                            "yt:videoId" -> videoId = text.trim()
+                            "yt:channelId" -> channelId = text.trim()
+                            "title" -> if (title.isEmpty()) title = text.trim()
+                            "name" -> if (insideAuthor) authorName = text.trim()
+                            "published" -> published = text.trim()
+                            "media:description" -> description = text.trim()
+                        }
+                    }
+                }
+                XmlPullParser.END_TAG -> {
+                    when (parser.name) {
+                        "author" -> insideAuthor = false
+                        "entry" -> {
+                            if (videoId.isNotBlank() && title.isNotBlank()) {
+                                videos.add(
+                                    VideoItem(
+                                        id = videoId,
+                                        title = title,
+                                        channelName = authorName.ifBlank { "Canal" },
+                                        channelId = channelId,
+                                        thumbnailUrl = buildThumbnailUrl(videoId, lowRamThumbnails),
+                                        publishedAt = formatIsoDate(published),
+                                        durationText = "",
+                                        viewCountText = formatViews(views),
+                                        description = description,
+                                        sourceTag = "Atom RSS"
+                                    )
+                                )
+                            }
+                            insideEntry = false
+                        }
+                    }
+                    currentTag = ""
+                }
+            }
+            eventType = parser.next()
+        }
+        return videos
+    }
+
+    suspend fun resolveChannelFromInput(rawInput: String): Pair<String, String>? =
+        withContext(Dispatchers.IO) {
+            val trimmed = rawInput.trim()
+            if (Regex("^UC[A-Za-z0-9_-]{22}$").matches(trimmed)) {
+                val feedVideos = runCatching { fetchSingleChannelFeed(trimmed, true) }.getOrNull()
+                val name = feedVideos?.firstOrNull()?.channelName ?: "Canal $trimmed"
+                return@withContext trimmed to name
+            }
+
+            val targetUrl = when {
+                trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+                trimmed.startsWith("@") -> "https://www.youtube.com/$trimmed"
+                else -> "https://www.youtube.com/@$trimmed"
+            }
+
+            val html = httpGet(targetUrl, mobileUa = false) ?: return@withContext null
+            val channelId = Regex("""(?:itemprop="channelId"\s+content="|externalId":")(UC[A-Za-z0-9_-]{22})"""")
+                .find(html)?.groupValues?.getOrNull(1)
+                ?: return@withContext null
+
+            val titleMatch = Regex("""<meta\s+property="og:title"\s+content="([^"]+)"""")
+                .find(html)?.groupValues?.getOrNull(1)
+                ?: "Canal"
+
+            channelId to decodeHtmlEntities(titleMatch)
+        }
+
+    suspend fun searchVideos(
+        query: String,
+        lowRamThumbnails: Boolean,
+        customBridgeUrl: String
+    ): List<VideoItem> = withContext(Dispatchers.IO) {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) return@withContext emptyList()
+
+        // 1. Direct lightweight YouTube HTML initialData extractor (zero third-party proxy dependency)
+        val directResults = runCatching {
+            searchViaYouTubeInitialData(cleanQuery, lowRamThumbnails)
+        }.getOrDefault(emptyList())
+
+        if (directResults.isNotEmpty()) {
+            return@withContext directResults
+        }
+
+        // 2. Fallback to configured Piped bridge
+        val bridges = (listOf(customBridgeUrl) + defaultBridges).distinct()
+        for (bridge in bridges.take(2)) {
+            val piped = runCatching {
+                searchViaPiped(bridge, cleanQuery, lowRamThumbnails)
+            }.getOrDefault(emptyList())
+            if (piped.isNotEmpty()) return@withContext piped
+        }
+
+        emptyList()
+    }
+
+    private fun searchViaYouTubeInitialData(
+        query: String,
+        lowRamThumbnails: Boolean
+    ): List<VideoItem> {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val url = "https://www.youtube.com/results?search_query=$encoded&sp=EgIQAQ%253D%253D"
+        val html = httpGet(url, mobileUa = false) ?: return emptyList()
+        val jsonText = extractBalancedJsonObject(html, "ytInitialData") ?: return emptyList()
+        val root = JSONObject(jsonText)
+
+        val results = mutableListOf<VideoItem>()
+        val contents = root
+            .optJSONObject("contents")
+            ?.optJSONObject("twoColumnSearchResultsRenderer")
+            ?.optJSONObject("primaryContents")
+            ?.optJSONObject("sectionListRenderer")
+            ?.optJSONArray("contents") ?: return emptyList()
+
+        for (i in 0 until contents.length()) {
+            val section = contents.optJSONObject(i)
+            val items = section
+                ?.optJSONObject("itemSectionRenderer")
+                ?.optJSONArray("contents") ?: continue
+
+            for (j in 0 until items.length()) {
+                val videoRenderer = items.optJSONObject(j)?.optJSONObject("videoRenderer") ?: continue
+                val videoId = videoRenderer.optString("videoId")
+                if (videoId.length != 11) continue
+
+                val title = readRunsText(videoRenderer.optJSONObject("title"))
+                if (title.isBlank()) continue
+
+                val ownerObj = videoRenderer.optJSONObject("ownerText")
+                    ?: videoRenderer.optJSONObject("longBylineText")
+                val channelName = readRunsText(ownerObj).ifBlank { "YouTube" }
+                val channelId = ownerObj
+                    ?.optJSONArray("runs")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("navigationEndpoint")
+                    ?.optJSONObject("browseEndpoint")
+                    ?.optString("browseId") ?: ""
+
+                val duration = videoRenderer.optJSONObject("lengthText")?.optString("simpleText") ?: ""
+                val views = videoRenderer.optJSONObject("shortViewCountText")?.optString("simpleText")
+                    ?: videoRenderer.optJSONObject("viewCountText")?.optString("simpleText")
+                    ?: ""
+                val published = videoRenderer.optJSONObject("publishedTimeText")?.optString("simpleText") ?: ""
+
+                results.add(
+                    VideoItem(
+                        id = videoId,
+                        title = title,
+                        channelName = channelName,
+                        channelId = channelId,
+                        thumbnailUrl = buildThumbnailUrl(videoId, lowRamThumbnails),
+                        publishedAt = published,
+                        durationText = duration,
+                        viewCountText = views,
+                        sourceTag = "Busca Direta"
+                    )
+                )
+                if (results.size >= 24) break
+            }
+        }
+        return results
+    }
+
+    private fun searchViaPiped(
+        bridgeUrl: String,
+        query: String,
+        lowRamThumbnails: Boolean
+    ): List<VideoItem> {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val body = httpGet("$bridgeUrl/search?q=$encoded&filter=videos") ?: return emptyList()
+        val json = JSONObject(body)
+        val items = json.optJSONArray("items") ?: return emptyList()
+        val list = mutableListOf<VideoItem>()
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            val itemUrl = item.optString("url")
+            val id = extractVideoId("https://youtube.com$itemUrl") ?: continue
+            val seconds = item.optLong("duration", 0L)
+            list.add(
+                VideoItem(
+                    id = id,
+                    title = item.optString("title"),
+                    channelName = item.optString("uploaderName", "Canal"),
+                    channelId = item.optString("uploaderUrl").substringAfterLast("/"),
+                    thumbnailUrl = buildThumbnailUrl(id, lowRamThumbnails),
+                    publishedAt = item.optString("uploadedDate"),
+                    durationText = formatDuration(seconds),
+                    viewCountText = formatViews(item.optLong("views", -1L).takeIf { it >= 0 }?.toString() ?: ""),
+                    sourceTag = "Piped API"
+                )
+            )
+        }
+        return list
+    }
+
+    suspend fun fetchOEmbedMetadata(videoId: String, lowRamThumbnails: Boolean): VideoItem? =
+        withContext(Dispatchers.IO) {
+            val url = "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=$videoId&format=json"
+            val body = httpGet(url) ?: return@withContext null
+            val json = runCatching { JSONObject(body) }.getOrNull() ?: return@withContext null
+            VideoItem(
+                id = videoId,
+                title = json.optString("title", "Vídeo $videoId"),
+                channelName = json.optString("author_name", "YouTube"),
+                thumbnailUrl = buildThumbnailUrl(videoId, lowRamThumbnails),
+                sourceTag = "oEmbed"
+            )
+        }
+
+    suspend fun resolvePlayableStream(
+        videoId: String,
+        knownVideo: VideoItem?,
+        settings: OptimizationSettings
+    ): ResolvedStream = withContext(Dispatchers.IO) {
+        val baseline = knownVideo ?: fetchOEmbedMetadata(videoId, settings.lowRamThumbnails)
+        val title = baseline?.title ?: "Vídeo $videoId"
+        val channelName = baseline?.channelName ?: "YouTube"
+        val channelId = baseline?.channelId ?: ""
+        val thumb = baseline?.thumbnailUrl ?: buildThumbnailUrl(videoId, settings.lowRamThumbnails)
+        val desc = baseline?.description ?: ""
+
+        val embedUrl = "https://www.youtube-nocookie.com/embed/$videoId" +
+            "?autoplay=1&playsinline=1&rel=0&modestbranding=1&vq=${settings.qualityPreset.youtubeVqParam}"
+
+        if (settings.engineMode == PlaybackEngineMode.LITE_EMBED_ONLY) {
+            return@withContext ResolvedStream(
+                videoId = videoId,
+                title = title,
+                channelName = channelName,
+                channelId = channelId,
+                thumbnailUrl = thumb,
+                description = desc,
+                directH264Url = null,
+                qualityLabel = settings.qualityPreset.label,
+                codecLabel = "IFrame Lite",
+                embedUrl = embedUrl,
+                resolvedVia = "WebView Lite"
+            )
+        }
+
+        val bridges = (listOf(settings.customBridgeUrl) + defaultBridges).distinct()
+        for (bridge in bridges.take(3)) {
+            val pipedResult = runCatching {
+                resolveFromBridge(
+                    bridgeUrl = bridge,
+                    videoId = videoId,
+                    maxHeight = settings.qualityPreset.maxHeight,
+                    fallbackTitle = title,
+                    fallbackChannel = channelName,
+                    channelId = channelId,
+                    thumb = thumb,
+                    fallbackDesc = desc,
+                    embedUrl = embedUrl
+                )
+            }.getOrNull()
+            if (pipedResult != null && pipedResult.directH264Url != null) {
+                return@withContext pipedResult
+            }
+        }
+
+        ResolvedStream(
+            videoId = videoId,
+            title = title,
+            channelName = channelName,
+            channelId = channelId,
+            thumbnailUrl = thumb,
+            description = desc,
+            directH264Url = null,
+            qualityLabel = settings.qualityPreset.label,
+            codecLabel = "IFrame Lite (Fallback)",
+            embedUrl = embedUrl,
+            resolvedVia = "WebView Lite"
+        )
+    }
+
+    private fun resolveFromBridge(
+        bridgeUrl: String,
+        videoId: String,
+        maxHeight: Int,
+        fallbackTitle: String,
+        fallbackChannel: String,
+        channelId: String,
+        thumb: String,
+        fallbackDesc: String,
+        embedUrl: String
+    ): ResolvedStream? {
+        // Try Piped API format first: /streams/{id}
+        val pipedBody = httpGet("$bridgeUrl/streams/$videoId")
+        if (pipedBody != null && pipedBody.trimStart().startsWith("{")) {
+            val json = JSONObject(pipedBody)
+            val streams = json.optJSONArray("videoStreams")
+            if (streams != null) {
+                val picked = pickBestProgressiveH264FromPiped(streams, maxHeight)
+                if (picked != null) {
+                    return ResolvedStream(
+                        videoId = videoId,
+                        title = json.optString("title", fallbackTitle).ifBlank { fallbackTitle },
+                        channelName = json.optString("uploader", fallbackChannel).ifBlank { fallbackChannel },
+                        channelId = channelId,
+                        thumbnailUrl = thumb,
+                        description = json.optString("description", fallbackDesc).ifBlank { fallbackDesc },
+                        directH264Url = picked.first,
+                        qualityLabel = picked.second,
+                        codecLabel = "H.264 / AVC (Hardware)",
+                        embedUrl = embedUrl,
+                        resolvedVia = bridgeUrl.removePrefix("https://")
+                    )
+                }
+            }
+        }
+
+        // Try Invidious API format: /api/v1/videos/{id}
+        val invBody = httpGet("$bridgeUrl/api/v1/videos/$videoId")
+        if (invBody != null && invBody.trimStart().startsWith("{")) {
+            val json = JSONObject(invBody)
+            val formatStreams = json.optJSONArray("formatStreams")
+            if (formatStreams != null) {
+                val picked = pickBestProgressiveH264FromInvidious(formatStreams, maxHeight)
+                if (picked != null) {
+                    return ResolvedStream(
+                        videoId = videoId,
+                        title = json.optString("title", fallbackTitle).ifBlank { fallbackTitle },
+                        channelName = json.optString("author", fallbackChannel).ifBlank { fallbackChannel },
+                        channelId = channelId,
+                        thumbnailUrl = thumb,
+                        description = json.optString("description", fallbackDesc).ifBlank { fallbackDesc },
+                        directH264Url = picked.first,
+                        qualityLabel = picked.second,
+                        codecLabel = "H.264 / MP4 (Hardware)",
+                        embedUrl = embedUrl,
+                        resolvedVia = bridgeUrl.removePrefix("https://")
+                    )
+                }
+            }
+        }
+        return null
+    }
+
+    private fun pickBestProgressiveH264FromPiped(
+        streams: JSONArray,
+        maxHeight: Int
+    ): Pair<String, String>? {
+        data class Candidate(val url: String, val height: Int, val quality: String)
+        val candidates = mutableListOf<Candidate>()
+        for (i in 0 until streams.length()) {
+            val s = streams.optJSONObject(i) ?: continue
+            val videoOnly = s.optBoolean("videoOnly", true)
+            val mimeType = s.optString("mimeType").lowercase()
+            val codec = s.optString("codec").lowercase()
+            val format = s.optString("format").lowercase()
+            val url = s.optString("url")
+            if (videoOnly || url.isBlank()) continue
+            val isH264Mp4 = (mimeType.contains("mp4") || format.contains("mpeg_4")) &&
+                (codec.isBlank() || codec.contains("avc"))
+            if (!isH264Mp4) continue
+            val height = s.optInt("height", 360)
+            val quality = s.optString("quality", "${height}p")
+            candidates.add(Candidate(url, height, quality))
+        }
+        if (candidates.isEmpty()) return null
+        val withinCap = candidates.filter { it.height <= maxHeight }.maxByOrNull { it.height }
+        val chosen = withinCap ?: candidates.minByOrNull { it.height } ?: return null
+        return chosen.url to chosen.quality
+    }
+
+    private fun pickBestProgressiveH264FromInvidious(
+        streams: JSONArray,
+        maxHeight: Int
+    ): Pair<String, String>? {
+        data class Candidate(val url: String, val height: Int, val quality: String)
+        val candidates = mutableListOf<Candidate>()
+        for (i in 0 until streams.length()) {
+            val s = streams.optJSONObject(i) ?: continue
+            val container = s.optString("container").lowercase()
+            val url = s.optString("url")
+            if (container != "mp4" || url.isBlank()) continue
+            val res = s.optString("resolution", "360p")
+            val height = res.filter { it.isDigit() }.toIntOrNull() ?: 360
+            candidates.add(Candidate(url, height, res))
+        }
+        if (candidates.isEmpty()) return null
+        val withinCap = candidates.filter { it.height <= maxHeight }.maxByOrNull { it.height }
+        val chosen = withinCap ?: candidates.minByOrNull { it.height } ?: return null
+        return chosen.url to chosen.quality
+    }
+
+    suspend fun pingBridgeInstances(customBridgeUrl: String): List<BridgePingResult> =
+        withContext(Dispatchers.IO) {
+            val targets = (listOf(customBridgeUrl) + defaultBridges).distinct()
+            coroutineScope {
+                targets.map { base ->
+                    async {
+                        val start = System.currentTimeMillis()
+                        val ok = runCatching {
+                            val req = Request.Builder()
+                                .url("$base/healthcheck")
+                                .header("User-Agent", DESKTOP_UA)
+                                .build()
+                            client.newCall(req).execute().use { resp ->
+                                resp.isSuccessful || resp.code in 200..499
+                            }
+                        }.getOrDefault(false)
+                        val elapsed = System.currentTimeMillis() - start
+                        BridgePingResult(
+                            baseUrl = base,
+                            reachable = ok,
+                            latencyMs = elapsed,
+                            note = if (ok) "Online (${elapsed} ms)" else "Indisponível / Timeout"
+                        )
+                    }
+                }.awaitAll()
+            }
+        }
+
+    private fun httpGet(url: String, mobileUa: Boolean = true): String? {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", if (mobileUa) MOBILE_UA else DESKTOP_UA)
+            .header("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+            .build()
+
+        return client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            response.body?.string()
+        }
+    }
+
+    private fun extractBalancedJsonObject(html: String, symbol: String): String? {
+        val idx = html.indexOf(symbol)
+        if (idx == -1) return null
+        val braceStart = html.indexOf('{', idx)
+        if (braceStart == -1) return null
+
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (i in braceStart until html.length) {
+            val c = html[i]
+            if (inString) {
+                if (escaped) {
+                    escaped = false
+                } else if (c == '\\') {
+                    escaped = true
+                } else if (c == '"') {
+                    inString = false
+                }
+            } else {
+                when (c) {
+                    '"' -> inString = true
+                    '{' -> depth++
+                    '}' -> {
+                        depth--
+                        if (depth == 0) {
+                            return html.substring(braceStart, i + 1)
+                        }
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private fun readRunsText(obj: JSONObject?): String {
+        if (obj == null) return ""
+        val simple = obj.optString("simpleText")
+        if (simple.isNotBlank()) return simple
+        val runs = obj.optJSONArray("runs") ?: return ""
+        val sb = StringBuilder()
+        for (i in 0 until runs.length()) {
+            sb.append(runs.optJSONObject(i)?.optString("text") ?: "")
+        }
+        return sb.toString()
+    }
+
+    private fun formatIsoDate(iso: String): String {
+        if (iso.length < 10) return iso
+        val datePart = iso.substring(0, 10)
+        val parts = datePart.split("-")
+        return if (parts.size == 3) "${parts[2]}/${parts[1]}/${parts[0]}" else datePart
+    }
+
+    private fun formatViews(raw: String): String {
+        val count = raw.toLongOrNull() ?: return ""
+        return when {
+            count >= 1_000_000 -> String.format("%.1fM visualizações", count / 1_000_000.0)
+            count >= 1_000 -> String.format("%.0fK visualizações", count / 1_000.0)
+            else -> "$count visualizações"
+        }
+    }
+
+    private fun formatDuration(seconds: Long): String {
+        if (seconds <= 0) return ""
+        val h = seconds / 3600
+        val m = (seconds % 3600) / 60
+        val s = seconds % 60
+        return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
+        else String.format("%d:%02d", m, s)
+    }
+
+    private fun decodeHtmlEntities(input: String): String {
+        return input
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+    }
+
+    companion object {
+        private const val DESKTOP_UA =
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        private const val MOBILE_UA =
+            "Mozilla/5.0 (Linux; Android 7.0; SM-T560) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+}

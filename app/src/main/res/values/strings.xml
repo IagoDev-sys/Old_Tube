@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TabTube</string>
+    <string name="nav_feed">Início</string>
+    <string name="nav_search">Buscar</string>
+    <string name="nav_library">Salvos</string>
+    <string name="nav_diagnostics">Desempenho</string>
+    <string name="action_paste_link">Abrir Link</string>
+    <string name="action_add_channel">Adicionar Canal</string>
+    <string name="action_refresh">Atualizar feed</string>
+    <string name="action_back">Voltar</string>
+    <string name="action_bookmark">Salvar vídeo</string>
+    <string name="action_unbookmark">Remover dos salvos</string>
+    <string name="action_fullscreen">Tela cheia</string>
+    <string name="action_exit_fullscreen">Sair da tela cheia</string>
+    <string name="action_open_external">Abrir no navegador</string>
+    <string name="search_hint">Buscar vídeos (sem WebView pesada)...</string>
+    <string name="empty_library_title">Sua biblioteca está vazia</string>
+    <string name="empty_library_subtitle">Salve vídeos favoritos ou assista algo no feed para acompanhar seu histórico localmente.</string>
+</resources>
