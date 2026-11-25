@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "TabTube"
+rootProject.name = "OLD Tube"
 
 include(":app")

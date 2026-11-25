@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/ic_tabtube_symbol"
+        android:drawable="@drawable/ic_oldtube_symbol"
         android:gravity="center" />
 </layer-list>

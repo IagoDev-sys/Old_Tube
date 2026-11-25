@@ -1,6 +1,6 @@
 {
-  "name": "TabTube",
-  "description": "Reprodutor leve de vídeos otimizado para baixo consumo de RAM, decodificação H.264 por hardware e APIs compatíveis com dispositivos legados.",
+  "name": "OLD Tube",
+  "description": "Reprodutor retrô inspirado no YouTube clássico (2013-2014), otimizado para baixo consumo de memória e hardware legado com login Google e sincronização na nuvem.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

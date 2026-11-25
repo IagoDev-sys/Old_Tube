@@ -1,0 +1,131 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+             data.preferredQuality in ['ECO_360P', 'SD_480P', 'HD_720P'] &&
+             data.preferredEngine in ['HYBRID_AUTO', 'NATIVE_H264_ONLY', 'LITE_EMBED_ONLY'] &&
+             data.classicLightTheme is bool;
+    }
+
+    function isValidFollowedChannel(data, userId, channelId) {
+      return data.userId is string && data.userId == userId &&
+             data.channelId is string && data.channelId == channelId && data.channelId.size() <= 64 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 40;
+    }
+
+    function isValidCloudVideoRecord(data, userId, videoId) {
+      return data.userId is string && data.userId == userId &&
+             data.videoId is string && data.videoId == videoId && data.videoId.size() <= 32 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+             data.channelName is string && data.channelName.size() >= 1 && data.channelName.size() <= 100 &&
+             (!('channelId' in data) || (data.channelId is string && data.channelId.size() <= 64)) &&
+             data.thumbnailUrl is string && data.thumbnailUrl.size() >= 1 && data.thumbnailUrl.size() <= 300 &&
+             (!('durationText' in data) || (data.durationText is string && data.durationText.size() <= 24)) &&
+             (!('publishedAt' in data) || (data.publishedAt is string && data.publishedAt.size() <= 40)) &&
+             data.bookmarked is bool &&
+             data.lastPlayedAtMs is int && data.lastPlayedAtMs >= 0 &&
+             data.lastPositionMs is int && data.lastPositionMs >= 0;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'preferredQuality', 'preferredEngine', 'classicLightTheme', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'preferredQuality', 'preferredEngine', 'classicLightTheme', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidUserProfile(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidUserProfile(incoming(), userId) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'preferredQuality', 'preferredEngine', 'classicLightTheme', 'updatedAt']);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      match /channels/{channelId} {
+        allow get: if isOwner(userId) && isValidId(channelId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(channelId) &&
+                         incoming().keys().hasAll(['userId', 'channelId', 'name', 'category', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'channelId', 'name', 'category', 'createdAt', 'updatedAt']) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidFollowedChannel(incoming(), userId, channelId);
+
+        allow update: if isOwner(userId) &&
+                         isValidId(channelId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().channelId == existing().channelId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidFollowedChannel(incoming(), userId, channelId) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(channelId);
+      }
+
+      match /library/{videoId} {
+        allow get: if isOwner(userId) && isValidId(videoId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(videoId) &&
+                         incoming().keys().hasAll(['userId', 'videoId', 'title', 'channelName', 'thumbnailUrl', 'bookmarked', 'lastPlayedAtMs', 'lastPositionMs', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'videoId', 'title', 'channelName', 'channelId', 'thumbnailUrl', 'durationText', 'publishedAt', 'bookmarked', 'lastPlayedAtMs', 'lastPositionMs', 'createdAt', 'updatedAt']) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidCloudVideoRecord(incoming(), userId, videoId);
+
+        allow update: if isOwner(userId) &&
+                         isValidId(videoId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().videoId == existing().videoId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidCloudVideoRecord(incoming(), userId, videoId) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['title', 'channelName', 'channelId', 'thumbnailUrl', 'durationText', 'publishedAt', 'bookmarked', 'lastPlayedAtMs', 'lastPositionMs', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(videoId);
+      }
+    }
+  }
+}

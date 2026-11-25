@@ -31,17 +31,23 @@ enum class PlaybackEngineMode(
     val description: String
 ) {
     HYBRID_AUTO(
-        label = "Híbrido (H.264 + Lite Embed)",
-        description = "Tenta stream H.264 direto no MediaPlayer nativo; alterna para IFrame Lite se indisponível."
+        label = "Híbrido (H.264 + Embed/Mobile)",
+        description = "Tenta H.264 nativo; usa IFrame com fallback automático para Mobile Direto."
     ),
     NATIVE_H264_ONLY(
-        label = "Somente Nativo H.264",
-        description = "Menor uso de RAM possível via MediaCodec OMX. Requer instância Piped/Invidious ativa."
+        label = "Nativo H.264 (MediaPlayer)",
+        description = "Menor uso de RAM via MediaCodec OMX quando há ponte ativa."
     ),
     LITE_EMBED_ONLY(
-        label = "WebView Lite (IFrame)",
-        description = "Reprodutor enxuto sem scripts pesados do YouTube. Alta compatibilidade."
+        label = "Web Mobile / Embed Direto",
+        description = "Máxima compatibilidade em todos os vídeos do YouTube."
     )
+}
+
+enum class ActivePlayerBackend {
+    NATIVE_H264,
+    IFRAME_EMBED,
+    MOBILE_WEB
 }
 
 data class VideoItem(
@@ -68,6 +74,7 @@ data class ResolvedStream(
     val qualityLabel: String,
     val codecLabel: String,
     val embedUrl: String,
+    val mobileWatchUrl: String,
     val resolvedVia: String
 )
 
@@ -75,7 +82,7 @@ data class OptimizationSettings(
     val qualityPreset: QualityPreset = QualityPreset.SD_480P,
     val engineMode: PlaybackEngineMode = PlaybackEngineMode.HYBRID_AUTO,
     val lowRamThumbnails: Boolean = true,
-    val darkTheme: Boolean = true,
+    val classicLightTheme: Boolean = true,
     val customBridgeUrl: String = "https://pipedapi.kavin.rocks"
 )
 

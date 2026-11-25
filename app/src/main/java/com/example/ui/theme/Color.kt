@@ -2,30 +2,38 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Retro-Modern Cinema & Hardware Monitor Palette
-val CinemaCanvas = Color(0xFF0C0F14)
-val CinemaSurface = Color(0xFF141922)
-val CinemaSurfaceElevated = Color(0xFF1C2330)
-val CinemaSurfaceHighlight = Color(0xFF252E3E)
+// Classic 2013-2014 YouTube Light Palette ("Clássico 2013")
+val ClassicCanvasLight = Color(0xFFF1F1F1)
+val ClassicSurfaceLight = Color(0xFFFFFFFF)
+val ClassicSurfaceAltLight = Color(0xFFF8F8F8)
+val ClassicBorderLight = Color(0xFFDCDCDC)
+val ClassicTextPrimaryLight = Color(0xFF222222)
+val ClassicTextSecondaryLight = Color(0xFF666666)
 
-val CrimsonPlay = Color(0xFFE53935)
-val CrimsonPlayDark = Color(0xFF8C1D18)
-val CrimsonPlayContainer = Color(0xFF3E1414)
+// Classic YouTube Crimson & Glossy Red Accents
+val ClassicTubeRed = Color(0xFFCC181E)
+val ClassicTubeRedBright = Color(0xFFE62117)
+val ClassicTubeRedDark = Color(0xFF9E1115)
+val ClassicTubeRedSoft = Color(0xFFFDEAEA)
 
-val PhosphorCyan = Color(0xFF26C6DA)
-val PhosphorCyanContainer = Color(0xFF0E343B)
+// Classic 2013 Guide Drawer / Dark Chrome Palette
+val ClassicGuideDark = Color(0xFF282828)
+val ClassicGuideItemHover = Color(0xFF3A3A3A)
+val ClassicGuideText = Color(0xFFE8E8E8)
+val ClassicGuideTextMuted = Color(0xFFA8A8A8)
 
-val TelemetryAmber = Color(0xFFFFB300)
-val TelemetryAmberContainer = Color(0xFF3B2B08)
+// Classic Dark / Holo TV Theme ("Holo TV Escuro")
+val ClassicCanvasDark = Color(0xFF161616)
+val ClassicSurfaceDark = Color(0xFF212121)
+val ClassicSurfaceAltDark = Color(0xFF2B2B2B)
+val ClassicBorderDark = Color(0xFF383838)
+val ClassicTextPrimaryDark = Color(0xFFF2F2F2)
+val ClassicTextSecondaryDark = Color(0xFFAAAAAA)
 
-val SignalEmerald = Color(0xFF2ECC71)
-val TextPrimary = Color(0xFFF2F5F9)
-val TextSecondary = Color(0xFF9AA5B4)
-val OutlineSubtle = Color(0xFF2B3545)
-
-// Crisp Light Alternative
-val LightCanvas = Color(0xFFF6F8FB)
-val LightSurface = Color(0xFFFFFFFF)
-val LightSurfaceVariant = Color(0xFFE9EEF5)
-val LightTextPrimary = Color(0xFF11161F)
-val LightTextSecondary = Color(0xFF536073)
+// Android Holo & Telemetry Accents
+val HoloCyan = Color(0xFF33B5E5)
+val HoloCyanContainerDark = Color(0xFF123645)
+val HoloCyanContainerLight = Color(0xFFDDF3FC)
+val SignalEmerald = Color(0xFF2E9E5B)
+val TelemetryAmber = Color(0xFFE69500)
+val TelemetryAmberContainer = Color(0xFFFFF3D6)

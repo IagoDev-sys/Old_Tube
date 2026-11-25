@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -59,7 +60,7 @@ fun LibraryScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -70,7 +71,7 @@ fun LibraryScreen(
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = "Armazenamento SQLite/Room offline sem conta Google",
+                    text = "Favoritos e histórico salvos localmente sem necessidade de login",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -86,11 +87,15 @@ fun LibraryScreen(
             }
         }
 
-        TabRow(selectedTabIndex = selectedTab) {
+        TabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.primary
+        ) {
             Tab(
                 selected = selectedTab == 0,
                 onClick = { selectedTab = 0 },
-                text = { Text("Salvos (${bookmarks.size})") },
+                text = { Text("Assistir mais tarde (${bookmarks.size})") },
                 modifier = Modifier.testTag("tab_bookmarks")
             )
             Tab(
@@ -119,7 +124,8 @@ fun LibraryScreen(
                         .widthIn(max = 360.dp)
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(6.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(6.dp))
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
@@ -138,15 +144,15 @@ fun LibraryScreen(
                 )
             }
         } else {
-            val videoItems = currentItems.map { entity ->
+            val videoItems = currentItems.map { record ->
                 VideoItem(
-                    id = entity.videoId,
-                    title = entity.title,
-                    channelName = entity.channelName,
-                    channelId = entity.channelId,
-                    thumbnailUrl = entity.thumbnailUrl,
-                    publishedAt = entity.publishedAt,
-                    durationText = entity.durationText,
+                    id = record.videoId,
+                    title = record.title,
+                    channelName = record.channelName,
+                    channelId = record.channelId,
+                    thumbnailUrl = record.thumbnailUrl,
+                    publishedAt = record.publishedAt,
+                    durationText = record.durationText,
                     sourceTag = if (selectedTab == 0) "Salvo Local" else "Histórico"
                 )
             }
@@ -160,8 +166,8 @@ fun LibraryScreen(
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(columns),
                     contentPadding = PaddingValues(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(videoItems, key = { it.id }) { video ->

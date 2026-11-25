@@ -9,27 +9,27 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.outlined.Bookmarks
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -50,8 +50,11 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -60,16 +63,24 @@ import androidx.navigation.compose.rememberNavController
 import coil.Coil
 import coil.ImageLoader
 import coil.memory.MemoryCache
+import com.example.data.local.OptimizationPreferences
+import com.example.data.local.TabTubeDatabase
+import com.example.data.remote.YouTubeLegacyNetwork
+import com.example.data.repository.TabTubeRepository
+import com.example.data.telemetry.DeviceTelemetryProvider
 import com.example.ui.FeedUiState
 import com.example.ui.MainViewModel
 import com.example.ui.components.AddChannelDialog
+import com.example.ui.components.GuideNavItem
+import com.example.ui.components.OldTubeGuideSidebar
+import com.example.ui.components.OldTubeTopBar
 import com.example.ui.components.OpenVideoUrlDialog
 import com.example.ui.screens.DiagnosticsScreen
 import com.example.ui.screens.FeedScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.PlayerScreen
 import com.example.ui.screens.SearchScreen
-import com.example.ui.theme.TabTubeTheme
+import com.example.ui.theme.OldTubeTheme
 
 private const val ROUTE_FEED = "feed"
 private const val ROUTE_SEARCH = "search"
@@ -82,6 +93,7 @@ private data class NavDestination(
     val labelRes: Int,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
+    val guideIcon: ImageVector,
     val testTag: String
 )
 
@@ -102,13 +114,28 @@ class MainActivity : ComponentActivity() {
         Coil.setImageLoader(imageLoader)
 
         setContent {
-            TabTubeApp()
+            val viewModel: MainViewModel = viewModel(
+                factory = viewModelFactory {
+                    initializer {
+                        val app = checkNotNull(this[APPLICATION_KEY]) {
+                            "APPLICATION_KEY missing from CreationExtras"
+                        }
+                        val db = TabTubeDatabase.getInstance(app)
+                        val prefs = OptimizationPreferences(app)
+                        val network = YouTubeLegacyNetwork()
+                        val telemetry = DeviceTelemetryProvider(app)
+                        val repo = TabTubeRepository(db.dao(), prefs, network, telemetry)
+                        MainViewModel(repo)
+                    }
+                }
+            )
+            OldTubeMainShell(viewModel = viewModel)
         }
     }
 }
 
 @Composable
-fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
+private fun OldTubeMainShell(viewModel: MainViewModel) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val channels by viewModel.channels.collectAsStateWithLifecycle()
     val selectedChannelId by viewModel.selectedChannelId.collectAsStateWithLifecycle()
@@ -118,6 +145,7 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
     val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()
     val bookmarkedIds by viewModel.bookmarkedIds.collectAsStateWithLifecycle()
+    val followedChannelIds by viewModel.followedChannelIds.collectAsStateWithLifecycle()
     val playerState by viewModel.playerState.collectAsStateWithLifecycle()
     val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
     val pingResults by viewModel.pingResults.collectAsStateWithLifecycle()
@@ -135,7 +163,6 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
 
     val context = LocalContext.current
 
-    // Immersive system bar control during fullscreen playback
     DisposableEffect(isFullscreen, currentRoute) {
         val window = (context as? Activity)?.window
         val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
@@ -168,6 +195,7 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
                 labelRes = R.string.nav_feed,
                 selectedIcon = Icons.Filled.Home,
                 unselectedIcon = Icons.Outlined.Home,
+                guideIcon = Icons.Rounded.Home,
                 testTag = "nav_feed"
             ),
             NavDestination(
@@ -175,13 +203,15 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
                 labelRes = R.string.nav_search,
                 selectedIcon = Icons.Filled.Search,
                 unselectedIcon = Icons.Outlined.Search,
+                guideIcon = Icons.Rounded.Search,
                 testTag = "nav_search"
             ),
             NavDestination(
                 route = ROUTE_LIBRARY,
                 labelRes = R.string.nav_library,
-                selectedIcon = Icons.Filled.Bookmarks,
-                unselectedIcon = Icons.Outlined.Bookmarks,
+                selectedIcon = Icons.Filled.VideoLibrary,
+                unselectedIcon = Icons.Outlined.VideoLibrary,
+                guideIcon = Icons.Rounded.VideoLibrary,
                 testTag = "nav_library"
             ),
             NavDestination(
@@ -189,6 +219,7 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
                 labelRes = R.string.nav_diagnostics,
                 selectedIcon = Icons.Filled.Tune,
                 unselectedIcon = Icons.Outlined.Tune,
+                guideIcon = Icons.Rounded.Tune,
                 testTag = "nav_diagnostics"
             )
         )
@@ -214,9 +245,9 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
         }
     }
 
-    TabTubeTheme(darkTheme = settings.darkTheme) {
+    OldTubeTheme(classicLightTheme = settings.classicLightTheme) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val useNavigationRail = maxWidth >= 600.dp
+            val useGuideSidebar = maxWidth >= 600.dp
             val showChrome = !(currentRoute == ROUTE_PLAYER && isFullscreen)
 
             Scaffold(
@@ -224,8 +255,18 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
                 containerColor = MaterialTheme.colorScheme.background,
                 contentWindowInsets = if (showChrome) WindowInsets.safeDrawing else WindowInsets(0),
                 snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+                topBar = {
+                    if (showChrome && currentRoute != ROUTE_PLAYER) {
+                        OldTubeTopBar(
+                            isDarkSurface = !settings.classicLightTheme,
+                            onSearchClick = { navigateTab(ROUTE_SEARCH) },
+                            onPasteLinkClick = { showOpenUrlDialog = true },
+                            onSettingsClick = { navigateTab(ROUTE_DIAGNOSTICS) }
+                        )
+                    }
+                },
                 bottomBar = {
-                    if (showChrome && !useNavigationRail && currentRoute != ROUTE_PLAYER) {
+                    if (showChrome && !useGuideSidebar && currentRoute != ROUTE_PLAYER) {
                         NavigationBar(
                             windowInsets = WindowInsets.navigationBars,
                             containerColor = MaterialTheme.colorScheme.surface
@@ -254,29 +295,31 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
                         .fillMaxSize()
                         .padding(innerPadding)
                 ) {
-                    if (showChrome && useNavigationRail && currentRoute != ROUTE_PLAYER) {
-                        NavigationRail(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .windowInsetsPadding(WindowInsets.navigationBars),
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ) {
-                            destinations.forEach { dest ->
-                                val selected = currentRoute == dest.route
-                                NavigationRailItem(
-                                    selected = selected,
-                                    onClick = { navigateTab(dest.route) },
-                                    icon = {
-                                        Icon(
-                                            imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
-                                            contentDescription = stringResource(dest.labelRes)
-                                        )
-                                    },
-                                    label = { Text(stringResource(dest.labelRes)) },
-                                    modifier = Modifier.testTag(dest.testTag)
-                                )
-                            }
+                    if (showChrome && useGuideSidebar && currentRoute != ROUTE_PLAYER) {
+                        val guideItems = destinations.map { d ->
+                            GuideNavItem(
+                                route = d.route,
+                                label = stringResource(d.labelRes),
+                                icon = d.guideIcon,
+                                testTag = d.testTag
+                            )
                         }
+                        OldTubeGuideSidebar(
+                            navItems = guideItems,
+                            currentRoute = currentRoute,
+                            channels = channels,
+                            selectedChannelId = selectedChannelId,
+                            onNavigate = { route ->
+                                if (route == ROUTE_FEED) {
+                                    viewModel.selectChannelFilter(null)
+                                }
+                                navigateTab(route)
+                            },
+                            onSelectChannel = { channelId ->
+                                viewModel.selectChannelFilter(channelId)
+                                navigateTab(ROUTE_FEED)
+                            }
+                        )
                     }
 
                     Box(modifier = Modifier.weight(1f).fillMaxSize()) {
@@ -295,7 +338,6 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
                                     onSelectChannel = viewModel::selectChannelFilter,
                                     onRemoveChannel = viewModel::removeChannel,
                                     onRefresh = viewModel::refreshFeed,
-                                    onOpenUrlDialog = { showOpenUrlDialog = true },
                                     onOpenAddChannelDialog = { showAddChannelDialog = true },
                                     onVideoClick = { video ->
                                         viewModel.openVideo(video)
@@ -356,7 +398,7 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
                                     onQualitySelected = viewModel::updateQuality,
                                     onEngineSelected = viewModel::updateEngine,
                                     onLowRamThumbnailsChanged = viewModel::updateLowRamThumbnails,
-                                    onDarkThemeChanged = viewModel::updateDarkTheme,
+                                    onClassicLightThemeChanged = viewModel::updateClassicLightTheme,
                                     onSaveBridgeUrl = viewModel::updateCustomBridgeUrl,
                                     onRunBridgePing = viewModel::runBridgeDiagnostics
                                 )
@@ -368,15 +410,17 @@ fun TabTubeApp(viewModel: MainViewModel = viewModel()) {
                                     playerState = playerState,
                                     relatedVideos = related,
                                     bookmarkedIds = bookmarkedIds,
+                                    followedChannelIds = followedChannelIds,
                                     isFullscreen = isFullscreen,
                                     onSetFullscreen = { isFullscreen = it },
                                     onBack = {
                                         isFullscreen = false
                                         navController.popBackStack()
                                     },
-                                    onSwitchEngine = viewModel::switchPlayerEngine,
+                                    onSwitchBackend = viewModel::switchPlayerBackend,
                                     onPositionChanged = viewModel::savePlaybackPosition,
                                     onBookmarkToggle = viewModel::toggleBookmark,
+                                    onToggleSubscribe = viewModel::toggleChannelSubscription,
                                     onSelectRelated = { video -> viewModel.openVideo(video) },
                                     onRetryVideo = { id -> viewModel.openVideoById(id) }
                                 )

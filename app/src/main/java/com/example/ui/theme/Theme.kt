@@ -9,69 +9,76 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
-private val TabTubeDarkScheme = darkColorScheme(
-    primary = CrimsonPlay,
+private val OldTubeLightScheme = lightColorScheme(
+    primary = ClassicTubeRed,
     onPrimary = Color.White,
-    primaryContainer = CrimsonPlayContainer,
-    onPrimaryContainer = Color(0xFFFFDAD6),
-    secondary = PhosphorCyan,
-    onSecondary = Color(0xFF002026),
-    secondaryContainer = PhosphorCyanContainer,
-    onSecondaryContainer = Color(0xFFB2EBF2),
-    tertiary = TelemetryAmber,
-    onTertiary = Color(0xFF261900),
-    tertiaryContainer = TelemetryAmberContainer,
-    onTertiaryContainer = Color(0xFFFFE082),
-    background = CinemaCanvas,
-    onBackground = TextPrimary,
-    surface = CinemaSurface,
-    onSurface = TextPrimary,
-    surfaceVariant = CinemaSurfaceElevated,
-    onSurfaceVariant = TextSecondary,
-    surfaceContainerHigh = CinemaSurfaceElevated,
-    surfaceContainerHighest = CinemaSurfaceHighlight,
-    outline = OutlineSubtle,
-    outlineVariant = Color(0xFF1F2734)
-)
-
-private val TabTubeLightScheme = lightColorScheme(
-    primary = CrimsonPlay,
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFFFDAD6),
-    onPrimaryContainer = CrimsonPlayDark,
-    secondary = Color(0xFF007C91),
+    primaryContainer = ClassicTubeRedSoft,
+    onPrimaryContainer = ClassicTubeRedDark,
+    secondary = Color(0xFF167AC6), // Classic 2013 YouTube Link/Subscribe Blue
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFCFF4FA),
-    onSecondaryContainer = Color(0xFF002026),
-    tertiary = Color(0xFF9A6700),
+    secondaryContainer = HoloCyanContainerLight,
+    onSecondaryContainer = Color(0xFF0A3B5C),
+    tertiary = TelemetryAmber,
     onTertiary = Color.White,
-    background = LightCanvas,
-    onBackground = LightTextPrimary,
-    surface = LightSurface,
-    onSurface = LightTextPrimary,
-    surfaceVariant = LightSurfaceVariant,
-    onSurfaceVariant = LightTextSecondary,
-    outline = Color(0xFFD0D8E4)
+    tertiaryContainer = TelemetryAmberContainer,
+    onTertiaryContainer = Color(0xFF4D3200),
+    background = ClassicCanvasLight,
+    onBackground = ClassicTextPrimaryLight,
+    surface = ClassicSurfaceLight,
+    onSurface = ClassicTextPrimaryLight,
+    surfaceVariant = ClassicSurfaceAltLight,
+    onSurfaceVariant = ClassicTextSecondaryLight,
+    surfaceContainerHigh = ClassicSurfaceAltLight,
+    surfaceContainerHighest = Color(0xFFE6E6E6),
+    outline = ClassicBorderLight,
+    outlineVariant = ClassicBorderLight
 )
 
-val TabTubeShapes = Shapes(
-    small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(12.dp),
-    large = RoundedCornerShape(16.dp),
-    extraLarge = RoundedCornerShape(24.dp)
+private val OldTubeDarkScheme = darkColorScheme(
+    primary = ClassicTubeRedBright,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFF4A1517),
+    onPrimaryContainer = Color(0xFFFFD6D6),
+    secondary = HoloCyan,
+    onSecondary = Color(0xFF002330),
+    secondaryContainer = HoloCyanContainerDark,
+    onSecondaryContainer = Color(0xFFC2EEFF),
+    tertiary = TelemetryAmber,
+    onTertiary = Color(0xFF261700),
+    tertiaryContainer = Color(0xFF3E2B05),
+    onTertiaryContainer = Color(0xFFFFE29A),
+    background = ClassicCanvasDark,
+    onBackground = ClassicTextPrimaryDark,
+    surface = ClassicSurfaceDark,
+    onSurface = ClassicTextPrimaryDark,
+    surfaceVariant = ClassicSurfaceAltDark,
+    onSurfaceVariant = ClassicTextSecondaryDark,
+    surfaceContainerHigh = ClassicSurfaceAltDark,
+    surfaceContainerHighest = Color(0xFF343434),
+    outline = ClassicBorderDark,
+    outlineVariant = ClassicBorderDark
+)
+
+// Crisp 2013-era flatter, sharper shapes (low overdraw, nostalgic geometry)
+val OldTubeShapes = Shapes(
+    extraSmall = RoundedCornerShape(2.dp),
+    small = RoundedCornerShape(4.dp),
+    medium = RoundedCornerShape(6.dp),
+    large = RoundedCornerShape(8.dp),
+    extraLarge = RoundedCornerShape(12.dp)
 )
 
 @Composable
-fun TabTubeTheme(
-    darkTheme: Boolean = true,
-    content: @Composable () -> Unit,
+fun OldTubeTheme(
+    classicLightTheme: Boolean = true,
+    content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) TabTubeDarkScheme else TabTubeLightScheme
+    val colorScheme = if (classicLightTheme) OldTubeLightScheme else OldTubeDarkScheme
 
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
-        shapes = TabTubeShapes,
+        shapes = OldTubeShapes,
         content = content
     )
 }

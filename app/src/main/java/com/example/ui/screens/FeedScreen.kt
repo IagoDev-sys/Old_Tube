@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,7 +24,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
@@ -35,7 +33,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -65,7 +62,6 @@ fun FeedScreen(
     onSelectChannel: (String?) -> Unit,
     onRemoveChannel: (String) -> Unit,
     onRefresh: () -> Unit,
-    onOpenUrlDialog: () -> Unit,
     onOpenAddChannelDialog: () -> Unit,
     onVideoClick: (VideoItem) -> Unit,
     onBookmarkToggle: (VideoItem) -> Unit,
@@ -73,18 +69,19 @@ fun FeedScreen(
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        // Header + Quick Actions
+        // Classic 2013 Section Title + Hardware Strip
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
+                val selectedChannelName = channels.firstOrNull { it.channelId == selectedChannelId }?.name
                 Text(
-                    text = "TabTube",
-                    style = MaterialTheme.typography.headlineLarge,
+                    text = selectedChannelName ?: "O que assistir",
+                    style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
@@ -94,85 +91,55 @@ fun FeedScreen(
                 )
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(
-                    onClick = onOpenUrlDialog,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("open_link_button"),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Link,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(stringResource(R.string.action_paste_link))
-                }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                IconButton(
-                    onClick = onRefresh,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("refresh_feed_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Refresh,
-                        contentDescription = stringResource(R.string.action_refresh),
-                        tint = MaterialTheme.colorScheme.onBackground
-                    )
-                }
+            IconButton(
+                onClick = onRefresh,
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("refresh_feed_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Refresh,
+                    contentDescription = stringResource(R.string.action_refresh),
+                    tint = MaterialTheme.colorScheme.onBackground
+                )
             }
         }
 
-        // Compact hardware mode banner
+        // Compact hardware profile strip
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(4.dp))
                 .clickable(onClick = onOpenDiagnostics)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
                 .testTag("hardware_banner"),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(4.dp),
             color = MaterialTheme.colorScheme.surface
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Memory,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.size(20.dp)
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
                 )
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (telemetry.hasHardwareAvc) {
-                            "Decodificador H.264 por Hardware ativo (${settings.qualityPreset.label})"
-                        } else {
-                            "Modo econômico ativo (${settings.qualityPreset.label})"
-                        },
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "${telemetry.deviceModel} • API ${telemetry.apiLevel} • Toque para ajustar perfil Tab E",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "${telemetry.deviceModel} • ${if (telemetry.hasHardwareAvc) "H.264 HW" else "Modo Eco"} • ${settings.engineMode.label}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        // Channel Filter Bar (RSS sources)
+        // Channel Filter Chips
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -182,7 +149,8 @@ fun FeedScreen(
                 FilterChip(
                     selected = selectedChannelId == null,
                     onClick = { onSelectChannel(null) },
-                    label = { Text("Todos os canais") },
+                    label = { Text("Todos (${channels.size})") },
+                    shape = RoundedCornerShape(4.dp),
                     modifier = Modifier.testTag("channel_chip_all"),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -195,6 +163,7 @@ fun FeedScreen(
                     selected = selectedChannelId == channel.channelId,
                     onClick = { onSelectChannel(channel.channelId) },
                     label = { Text(channel.name) },
+                    shape = RoundedCornerShape(4.dp),
                     trailingIcon = if (selectedChannelId == channel.channelId && channels.size > 1) {
                         {
                             Icon(
@@ -217,6 +186,7 @@ fun FeedScreen(
                 FilterChip(
                     selected = false,
                     onClick = onOpenAddChannelDialog,
+                    shape = RoundedCornerShape(4.dp),
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Rounded.Add,
@@ -230,9 +200,8 @@ fun FeedScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
-        // Adaptive Content Area
         when (feedState) {
             is FeedUiState.Loading -> {
                 Box(
@@ -241,9 +210,9 @@ fun FeedScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "Lendo feeds XML leves (~20 KB/canal)...",
+                            text = "Carregando feeds leves (~20 KB/canal)...",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -264,9 +233,10 @@ fun FeedScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
                         Button(
                             onClick = onRefresh,
+                            shape = RoundedCornerShape(4.dp),
                             modifier = Modifier.testTag("retry_feed_button")
                         ) {
                             Text("Tentar novamente")
@@ -285,8 +255,8 @@ fun FeedScreen(
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(columns),
                         contentPadding = PaddingValues(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
                         items(feedState.videos, key = { it.id }) { video ->

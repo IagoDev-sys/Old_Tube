@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,13 +31,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.filled.WatchLater
+import androidx.compose.material.icons.outlined.WatchLater
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -59,10 +63,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.data.model.ActivePlayerBackend
 import com.example.data.model.ResolvedStream
 import com.example.data.model.VideoItem
 import com.example.ui.PlayerUiState
@@ -73,12 +79,14 @@ fun PlayerScreen(
     playerState: PlayerUiState,
     relatedVideos: List<VideoItem>,
     bookmarkedIds: Set<String>,
+    followedChannelIds: Set<String>,
     isFullscreen: Boolean,
     onSetFullscreen: (Boolean) -> Unit,
     onBack: () -> Unit,
-    onSwitchEngine: (Boolean) -> Unit,
+    onSwitchBackend: (ActivePlayerBackend) -> Unit,
     onPositionChanged: (String, Long) -> Unit,
     onBookmarkToggle: (VideoItem) -> Unit,
+    onToggleSubscribe: (String, String) -> Unit,
     onSelectRelated: (VideoItem) -> Unit,
     onRetryVideo: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -96,8 +104,8 @@ fun PlayerScreen(
     when (playerState) {
         is PlayerUiState.Idle -> {
             Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                OutlinedButton(onClick = onBack) {
-                    Text("Voltar ao feed")
+                OutlinedButton(onClick = onBack, shape = RoundedCornerShape(4.dp)) {
+                    Text("Voltar ao início")
                 }
             }
         }
@@ -116,7 +124,7 @@ fun PlayerScreen(
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "Resolvendo stream H.264 / Lite...",
+                            text = "Preparando reprodutor clássico...",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White
                         )
@@ -142,16 +150,22 @@ fun PlayerScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = { onRetryVideo(playerState.videoId) }) {
+                        Button(
+                            onClick = { onRetryVideo(playerState.videoId) },
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
                             Text("Tentar novamente")
                         }
-                        OutlinedButton(onClick = {
-                            val intent = Intent(
-                                Intent.ACTION_VIEW,
-                                Uri.parse("https://www.youtube.com/watch?v=${playerState.videoId}")
-                            )
-                            context.startActivity(intent)
-                        }) {
+                        OutlinedButton(
+                            shape = RoundedCornerShape(4.dp),
+                            onClick = {
+                                val intent = Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("https://www.youtube.com/watch?v=${playerState.videoId}")
+                                )
+                                context.startActivity(intent)
+                            }
+                        ) {
                             Text(stringResource(R.string.action_open_external))
                         }
                     }
@@ -162,6 +176,7 @@ fun PlayerScreen(
         is PlayerUiState.Ready -> {
             val stream = playerState.stream
             val isBookmarked = stream.videoId in bookmarkedIds
+            val isSubscribed = stream.channelId.isNotBlank() && stream.channelId in followedChannelIds
             val currentAsVideo = VideoItem(
                 id = stream.videoId,
                 title = stream.title,
@@ -180,11 +195,10 @@ fun PlayerScreen(
                 ) {
                     LegacyPlayerView(
                         stream = stream,
-                        useLiteEmbed = playerState.useLiteEmbed,
+                        activeBackend = playerState.activeBackend,
                         isFullscreen = true,
                         onToggleFullscreen = { onSetFullscreen(false) },
-                        onFallbackToLiteEmbed = { onSwitchEngine(true) },
-                        onSwitchEngine = onSwitchEngine,
+                        onSwitchBackend = onSwitchBackend,
                         onPositionChanged = { pos -> onPositionChanged(stream.videoId, pos) },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -199,18 +213,17 @@ fun PlayerScreen(
                     Row(modifier = Modifier.fillMaxSize()) {
                         Column(
                             modifier = Modifier
-                                .weight(0.64f)
+                                .weight(0.65f)
                                 .fillMaxHeight()
                                 .verticalScroll(rememberScrollState())
                         ) {
                             PlayerTopHeader(title = stream.channelName, onBack = onBack)
                             LegacyPlayerView(
                                 stream = stream,
-                                useLiteEmbed = playerState.useLiteEmbed,
+                                activeBackend = playerState.activeBackend,
                                 isFullscreen = false,
                                 onToggleFullscreen = { onSetFullscreen(true) },
-                                onFallbackToLiteEmbed = { onSwitchEngine(true) },
-                                onSwitchEngine = onSwitchEngine,
+                                onSwitchBackend = onSwitchBackend,
                                 onPositionChanged = { pos -> onPositionChanged(stream.videoId, pos) },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -218,10 +231,14 @@ fun PlayerScreen(
                             )
                             PlayerMetadataPanel(
                                 stream = stream,
-                                useLiteEmbed = playerState.useLiteEmbed,
+                                activeBackend = playerState.activeBackend,
                                 isBookmarked = isBookmarked,
-                                onSwitchEngine = onSwitchEngine,
+                                isSubscribed = isSubscribed,
+                                onSwitchBackend = onSwitchBackend,
                                 onBookmarkToggle = { onBookmarkToggle(currentAsVideo) },
+                                onToggleSubscribe = {
+                                    onToggleSubscribe(stream.channelId, stream.channelName)
+                                },
                                 onOpenExternal = {
                                     val intent = Intent(
                                         Intent.ACTION_VIEW,
@@ -234,15 +251,16 @@ fun PlayerScreen(
 
                         Column(
                             modifier = Modifier
-                                .weight(0.36f)
+                                .weight(0.35f)
                                 .fillMaxHeight()
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .border(1.dp, MaterialTheme.colorScheme.outline)
+                                .background(MaterialTheme.colorScheme.surface)
                                 .padding(12.dp)
                         ) {
                             Text(
-                                text = "A seguir",
+                                text = "Próximos vídeos",
                                 style = MaterialTheme.typography.titleLarge,
-                                color = MaterialTheme.colorScheme.onBackground,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.padding(bottom = 10.dp)
                             )
                             LazyColumn(
@@ -272,11 +290,10 @@ fun PlayerScreen(
                         item {
                             LegacyPlayerView(
                                 stream = stream,
-                                useLiteEmbed = playerState.useLiteEmbed,
+                                activeBackend = playerState.activeBackend,
                                 isFullscreen = false,
                                 onToggleFullscreen = { onSetFullscreen(true) },
-                                onFallbackToLiteEmbed = { onSwitchEngine(true) },
-                                onSwitchEngine = onSwitchEngine,
+                                onSwitchBackend = onSwitchBackend,
                                 onPositionChanged = { pos -> onPositionChanged(stream.videoId, pos) },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -286,10 +303,14 @@ fun PlayerScreen(
                         item {
                             PlayerMetadataPanel(
                                 stream = stream,
-                                useLiteEmbed = playerState.useLiteEmbed,
+                                activeBackend = playerState.activeBackend,
                                 isBookmarked = isBookmarked,
-                                onSwitchEngine = onSwitchEngine,
+                                isSubscribed = isSubscribed,
+                                onSwitchBackend = onSwitchBackend,
                                 onBookmarkToggle = { onBookmarkToggle(currentAsVideo) },
+                                onToggleSubscribe = {
+                                    onToggleSubscribe(stream.channelId, stream.channelName)
+                                },
                                 onOpenExternal = {
                                     val intent = Intent(
                                         Intent.ACTION_VIEW,
@@ -303,7 +324,7 @@ fun PlayerScreen(
                             item {
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                                 Text(
-                                    text = "A seguir",
+                                    text = "Próximos vídeos",
                                     style = MaterialTheme.typography.titleLarge,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                                 )
@@ -331,118 +352,199 @@ private fun PlayerTopHeader(
     title: String,
     onBack: () -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(
-            onClick = onBack,
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Row(
             modifier = Modifier
-                .minimumInteractiveComponentSize()
-                .testTag("player_back_button")
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                contentDescription = stringResource(R.string.action_back)
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("player_back_button")
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = stringResource(R.string.action_back)
+                )
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
         }
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PlayerMetadataPanel(
     stream: ResolvedStream,
-    useLiteEmbed: Boolean,
+    activeBackend: ActivePlayerBackend,
     isBookmarked: Boolean,
-    onSwitchEngine: (Boolean) -> Unit,
+    isSubscribed: Boolean,
+    onSwitchBackend: (ActivePlayerBackend) -> Unit,
     onBookmarkToggle: () -> Unit,
+    onToggleSubscribe: () -> Unit,
     onOpenExternal: () -> Unit
 ) {
     var expandDescription by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.padding(16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(16.dp)
+    ) {
         Text(
             text = stream.title,
             style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground
+            color = MaterialTheme.colorScheme.onSurface
         )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "${stream.channelName} • Origem: ${stream.resolvedVia}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Spacer(modifier = Modifier.height(10.dp))
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Engine / Codec control row
+        // Classic 2013 Channel Row + Subscribe Button
         Row(
             modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stream.channelName.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = stream.channelName,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Via ${stream.resolvedVia}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (stream.channelId.isNotBlank()) {
+                Button(
+                    onClick = onToggleSubscribe,
+                    shape = RoundedCornerShape(3.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isSubscribed) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary,
+                        contentColor = if (isSubscribed) MaterialTheme.colorScheme.onSurfaceVariant else Color.White
+                    ),
+                    modifier = Modifier.testTag("subscribe_channel_button")
+                ) {
+                    Text(if (isSubscribed) "Inscrito ✓" else "Inscrever-se")
+                }
+            }
+        }
+
+        HorizontalDivider(
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(vertical = 12.dp)
+        )
+
+        // 3-Tier Engine Selector
+        Text(
+            text = "Modo de Reprodução (troque se o vídeo bloquear embed):",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             FilterChip(
-                selected = !useLiteEmbed,
-                onClick = { onSwitchEngine(false) },
+                selected = activeBackend == ActivePlayerBackend.NATIVE_H264,
+                onClick = { onSwitchBackend(ActivePlayerBackend.NATIVE_H264) },
                 enabled = stream.directH264Url != null,
+                shape = RoundedCornerShape(4.dp),
                 leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Rounded.Memory,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Icon(Icons.Rounded.Memory, contentDescription = null, modifier = Modifier.size(16.dp))
                 },
-                label = {
-                    Text(
-                        if (stream.directH264Url != null) "H.264 Nativo" else "H.264 Indisponível"
-                    )
-                },
+                label = { Text(if (stream.directH264Url != null) "H.264 Nativo" else "H.264 Indisponível") },
                 modifier = Modifier.testTag("chip_native_engine")
             )
 
             FilterChip(
-                selected = useLiteEmbed,
-                onClick = { onSwitchEngine(true) },
+                selected = activeBackend == ActivePlayerBackend.IFRAME_EMBED,
+                onClick = { onSwitchBackend(ActivePlayerBackend.IFRAME_EMBED) },
+                shape = RoundedCornerShape(4.dp),
                 leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Rounded.SwapHoriz,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Icon(Icons.Rounded.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
                 },
-                label = { Text("IFrame Lite") },
-                modifier = Modifier.testTag("chip_lite_engine")
+                label = { Text("Embed Direto") },
+                modifier = Modifier.testTag("chip_iframe_engine")
+            )
+
+            FilterChip(
+                selected = activeBackend == ActivePlayerBackend.MOBILE_WEB,
+                onClick = { onSwitchBackend(ActivePlayerBackend.MOBILE_WEB) },
+                shape = RoundedCornerShape(4.dp),
+                leadingIcon = {
+                    Icon(Icons.Rounded.Public, contentDescription = null, modifier = Modifier.size(16.dp))
+                },
+                label = { Text("Mobile Direto") },
+                modifier = Modifier.testTag("chip_mobile_engine")
             )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        if (activeBackend != ActivePlayerBackend.NATIVE_H264) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Se o YouTube pedir verificação neste IP/emulador, tente H.264 Nativo, Embed Direto ou Abrir no navegador.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(
                 onClick = onBookmarkToggle,
+                shape = RoundedCornerShape(4.dp),
                 modifier = Modifier.testTag("player_bookmark_button")
             ) {
                 Icon(
-                    imageVector = if (isBookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                    imageVector = if (isBookmarked) Icons.Filled.WatchLater else Icons.Outlined.WatchLater,
                     contentDescription = null,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(if (isBookmarked) "Salvo" else "Salvar")
+                Text(if (isBookmarked) "Salvo" else "Assistir mais tarde")
             }
 
             OutlinedButton(
                 onClick = onOpenExternal,
+                shape = RoundedCornerShape(4.dp),
                 modifier = Modifier.testTag("player_external_button")
             ) {
                 Icon(
@@ -460,9 +562,10 @@ private fun PlayerMetadataPanel(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(4.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
                     .clickable { expandDescription = !expandDescription },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(4.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -471,10 +574,7 @@ private fun PlayerMetadataPanel(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Descrição",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text(text = "Sobre este vídeo", style = MaterialTheme.typography.titleMedium)
                         Icon(
                             imageVector = if (expandDescription) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                             contentDescription = null
@@ -503,7 +603,7 @@ private fun CompactUpNextRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(4.dp))
             .clickable(onClick = onClick)
             .padding(4.dp)
             .testTag("up_next_${video.id}"),
@@ -516,8 +616,8 @@ private fun CompactUpNextRow(
             modifier = Modifier
                 .width(128.dp)
                 .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clip(RoundedCornerShape(3.dp))
+                .background(Color(0xFF101010))
         )
         Spacer(modifier = Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -528,7 +628,7 @@ private fun CompactUpNextRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(3.dp))
             Text(
                 text = video.channelName,
                 style = MaterialTheme.typography.labelSmall,

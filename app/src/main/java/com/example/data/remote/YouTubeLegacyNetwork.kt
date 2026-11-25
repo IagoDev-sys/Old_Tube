@@ -12,8 +12,10 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.ConnectionPool
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
@@ -24,18 +26,18 @@ import java.util.concurrent.TimeUnit
 class YouTubeLegacyNetwork {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(7, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
         .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
         .followRedirects(true)
         .build()
 
     private val defaultBridges = listOf(
-        "https://pipedapi.kavin.rocks",
-        "https://pipedapi.adminforge.de",
-        "https://api.piped.private.coffee",
         "https://inv.nadeko.net",
-        "https://yewtu.be"
+        "https://invidious.nerdvpn.de",
+        "https://yewtu.be",
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.adminforge.de"
     )
 
     fun extractVideoId(input: String): String? {
@@ -206,7 +208,6 @@ class YouTubeLegacyNetwork {
         val cleanQuery = query.trim()
         if (cleanQuery.isBlank()) return@withContext emptyList()
 
-        // 1. Direct lightweight YouTube HTML initialData extractor (zero third-party proxy dependency)
         val directResults = runCatching {
             searchViaYouTubeInitialData(cleanQuery, lowRamThumbnails)
         }.getOrDefault(emptyList())
@@ -215,9 +216,16 @@ class YouTubeLegacyNetwork {
             return@withContext directResults
         }
 
-        // 2. Fallback to configured Piped bridge
-        val bridges = (listOf(customBridgeUrl) + defaultBridges).distinct()
-        for (bridge in bridges.take(2)) {
+        val bridges = (listOf(customBridgeUrl) + defaultBridges)
+            .map { it.trim().trimEnd('/') }
+            .filter { it.startsWith("https://") }
+            .distinct()
+        for (bridge in bridges.take(3)) {
+            val invidious = runCatching {
+                searchViaInvidious(bridge, cleanQuery, lowRamThumbnails)
+            }.getOrDefault(emptyList())
+            if (invidious.isNotEmpty()) return@withContext invidious
+
             val piped = runCatching {
                 searchViaPiped(bridge, cleanQuery, lowRamThumbnails)
             }.getOrDefault(emptyList())
@@ -294,6 +302,40 @@ class YouTubeLegacyNetwork {
         return results
     }
 
+    private fun searchViaInvidious(
+        bridgeUrl: String,
+        query: String,
+        lowRamThumbnails: Boolean
+    ): List<VideoItem> {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val body = httpGet("$bridgeUrl/api/v1/search?q=$encoded&type=video") ?: return emptyList()
+        if (!body.trimStart().startsWith("[")) return emptyList()
+        val arr = JSONArray(body)
+        val list = mutableListOf<VideoItem>()
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            val id = item.optString("videoId")
+            if (id.length != 11) continue
+            val title = item.optString("title")
+            if (title.isBlank()) continue
+            list.add(
+                VideoItem(
+                    id = id,
+                    title = title,
+                    channelName = item.optString("author", "Canal"),
+                    channelId = item.optString("authorId"),
+                    thumbnailUrl = buildThumbnailUrl(id, lowRamThumbnails),
+                    publishedAt = item.optString("publishedText"),
+                    durationText = formatDuration(item.optLong("lengthSeconds", 0L)),
+                    viewCountText = formatViews(item.optLong("viewCount", -1L).takeIf { it >= 0 }?.toString() ?: ""),
+                    sourceTag = "Invidious API"
+                )
+            )
+            if (list.size >= 24) break
+        }
+        return list
+    }
+
     private fun searchViaPiped(
         bridgeUrl: String,
         query: String,
@@ -301,6 +343,7 @@ class YouTubeLegacyNetwork {
     ): List<VideoItem> {
         val encoded = URLEncoder.encode(query, "UTF-8")
         val body = httpGet("$bridgeUrl/search?q=$encoded&filter=videos") ?: return emptyList()
+        if (!body.trimStart().startsWith("{")) return emptyList()
         val json = JSONObject(body)
         val items = json.optJSONArray("items") ?: return emptyList()
         val list = mutableListOf<VideoItem>()
@@ -354,6 +397,7 @@ class YouTubeLegacyNetwork {
 
         val embedUrl = "https://www.youtube-nocookie.com/embed/$videoId" +
             "?autoplay=1&playsinline=1&rel=0&modestbranding=1&vq=${settings.qualityPreset.youtubeVqParam}"
+        val mobileWatchUrl = "https://m.youtube.com/watch?v=$videoId"
 
         if (settings.engineMode == PlaybackEngineMode.LITE_EMBED_ONLY) {
             return@withContext ResolvedStream(
@@ -365,15 +409,38 @@ class YouTubeLegacyNetwork {
                 description = desc,
                 directH264Url = null,
                 qualityLabel = settings.qualityPreset.label,
-                codecLabel = "IFrame Lite",
+                codecLabel = "Embed Direto",
                 embedUrl = embedUrl,
-                resolvedVia = "WebView Lite"
+                mobileWatchUrl = mobileWatchUrl,
+                resolvedVia = "Embed YouTube"
             )
         }
 
-        val bridges = (listOf(settings.customBridgeUrl) + defaultBridges).distinct()
+        // 1. Try direct InnerTube progressive H.264 stream (fastest, avoids community bridge downtime)
+        val directInnerTube = runCatching {
+            resolveViaInnerTube(
+                videoId = videoId,
+                maxHeight = settings.qualityPreset.maxHeight,
+                fallbackTitle = title,
+                fallbackChannel = channelName,
+                channelId = channelId,
+                thumb = thumb,
+                fallbackDesc = desc,
+                embedUrl = embedUrl,
+                mobileWatchUrl = mobileWatchUrl
+            )
+        }.getOrNull()
+        if (directInnerTube != null && directInnerTube.directH264Url != null) {
+            return@withContext directInnerTube
+        }
+
+        // 2. Fallback to Invidious / Piped community bridges
+        val bridges = (listOf(settings.customBridgeUrl) + defaultBridges)
+            .map { it.trim().trimEnd('/') }
+            .filter { it.startsWith("https://") }
+            .distinct()
         for (bridge in bridges.take(3)) {
-            val pipedResult = runCatching {
+            val bridgeResult = runCatching {
                 resolveFromBridge(
                     bridgeUrl = bridge,
                     videoId = videoId,
@@ -383,11 +450,12 @@ class YouTubeLegacyNetwork {
                     channelId = channelId,
                     thumb = thumb,
                     fallbackDesc = desc,
-                    embedUrl = embedUrl
+                    embedUrl = embedUrl,
+                    mobileWatchUrl = mobileWatchUrl
                 )
             }.getOrNull()
-            if (pipedResult != null && pipedResult.directH264Url != null) {
-                return@withContext pipedResult
+            if (bridgeResult != null && bridgeResult.directH264Url != null) {
+                return@withContext bridgeResult
             }
         }
 
@@ -400,10 +468,106 @@ class YouTubeLegacyNetwork {
             description = desc,
             directH264Url = null,
             qualityLabel = settings.qualityPreset.label,
-            codecLabel = "IFrame Lite (Fallback)",
+            codecLabel = "Embed + Mobile",
             embedUrl = embedUrl,
-            resolvedVia = "WebView Lite"
+            mobileWatchUrl = mobileWatchUrl,
+            resolvedVia = "YouTube Direto"
         )
+    }
+
+    private fun resolveViaInnerTube(
+        videoId: String,
+        maxHeight: Int,
+        fallbackTitle: String,
+        fallbackChannel: String,
+        channelId: String,
+        thumb: String,
+        fallbackDesc: String,
+        embedUrl: String,
+        mobileWatchUrl: String
+    ): ResolvedStream? {
+        val clients = listOf(
+            Triple("ANDROID_VR", "1.60.19", "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; Quest 3 Build/SQ3A.220605.009.A1) gzip"),
+            Triple("IOS", "19.45.4", "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)"),
+            Triple("ANDROID_TESTSUITE", "1.9", "com.google.android.youtube/1.9 (Linux; U; Android 11) gzip")
+        )
+
+        for ((clientName, clientVersion, userAgent) in clients) {
+            val payload = JSONObject().apply {
+                put("videoId", videoId)
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", clientName)
+                        put("clientVersion", clientVersion)
+                        put("hl", "pt")
+                        put("gl", "BR")
+                    })
+                })
+                put("contentCheckOk", true)
+                put("racyCheckOk", true)
+            }.toString()
+
+            val req = Request.Builder()
+                .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+                .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .header("User-Agent", userAgent)
+                .header("Content-Type", "application/json")
+                .header("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+                .build()
+
+            val body = runCatching {
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use null
+                    resp.body?.string()
+                }
+            }.getOrNull() ?: continue
+
+            val json = runCatching { JSONObject(body) }.getOrNull() ?: continue
+            val status = json.optJSONObject("playabilityStatus")?.optString("status") ?: ""
+            if (status != "OK") continue
+
+            val formats = json.optJSONObject("streamingData")?.optJSONArray("formats") ?: continue
+            val picked = pickBestProgressiveH264FromInnerTube(formats, maxHeight) ?: continue
+            val details = json.optJSONObject("videoDetails")
+
+            return ResolvedStream(
+                videoId = videoId,
+                title = details?.optString("title")?.ifBlank { fallbackTitle } ?: fallbackTitle,
+                channelName = details?.optString("author")?.ifBlank { fallbackChannel } ?: fallbackChannel,
+                channelId = details?.optString("channelId")?.ifBlank { channelId } ?: channelId,
+                thumbnailUrl = thumb,
+                description = details?.optString("shortDescription")?.ifBlank { fallbackDesc } ?: fallbackDesc,
+                directH264Url = picked.first,
+                qualityLabel = picked.second,
+                codecLabel = "H.264 / MP4 (Hardware)",
+                embedUrl = embedUrl,
+                mobileWatchUrl = mobileWatchUrl,
+                resolvedVia = "Stream Direto ($clientName)"
+            )
+        }
+        return null
+    }
+
+    private fun pickBestProgressiveH264FromInnerTube(
+        formats: JSONArray,
+        maxHeight: Int
+    ): Pair<String, String>? {
+        data class Candidate(val url: String, val height: Int, val quality: String)
+        val candidates = mutableListOf<Candidate>()
+        for (i in 0 until formats.length()) {
+            val f = formats.optJSONObject(i) ?: continue
+            val url = f.optString("url")
+            if (url.isBlank()) continue
+            val mime = f.optString("mimeType").lowercase()
+            if (!mime.contains("video/mp4")) continue
+            val height = f.optInt("height", 360)
+            val label = f.optString("qualityLabel").ifBlank { "${height}p" }
+            candidates.add(Candidate(url, height, label))
+        }
+        if (candidates.isEmpty()) return null
+        val withinCap = candidates.filter { it.height <= maxHeight }.maxByOrNull { it.height }
+        val chosen = withinCap ?: candidates.minByOrNull { it.height } ?: return null
+        return chosen.url to chosen.quality
     }
 
     private fun resolveFromBridge(
@@ -415,34 +579,9 @@ class YouTubeLegacyNetwork {
         channelId: String,
         thumb: String,
         fallbackDesc: String,
-        embedUrl: String
+        embedUrl: String,
+        mobileWatchUrl: String
     ): ResolvedStream? {
-        // Try Piped API format first: /streams/{id}
-        val pipedBody = httpGet("$bridgeUrl/streams/$videoId")
-        if (pipedBody != null && pipedBody.trimStart().startsWith("{")) {
-            val json = JSONObject(pipedBody)
-            val streams = json.optJSONArray("videoStreams")
-            if (streams != null) {
-                val picked = pickBestProgressiveH264FromPiped(streams, maxHeight)
-                if (picked != null) {
-                    return ResolvedStream(
-                        videoId = videoId,
-                        title = json.optString("title", fallbackTitle).ifBlank { fallbackTitle },
-                        channelName = json.optString("uploader", fallbackChannel).ifBlank { fallbackChannel },
-                        channelId = channelId,
-                        thumbnailUrl = thumb,
-                        description = json.optString("description", fallbackDesc).ifBlank { fallbackDesc },
-                        directH264Url = picked.first,
-                        qualityLabel = picked.second,
-                        codecLabel = "H.264 / AVC (Hardware)",
-                        embedUrl = embedUrl,
-                        resolvedVia = bridgeUrl.removePrefix("https://")
-                    )
-                }
-            }
-        }
-
-        // Try Invidious API format: /api/v1/videos/{id}
         val invBody = httpGet("$bridgeUrl/api/v1/videos/$videoId")
         if (invBody != null && invBody.trimStart().startsWith("{")) {
             val json = JSONObject(invBody)
@@ -461,6 +600,32 @@ class YouTubeLegacyNetwork {
                         qualityLabel = picked.second,
                         codecLabel = "H.264 / MP4 (Hardware)",
                         embedUrl = embedUrl,
+                        mobileWatchUrl = mobileWatchUrl,
+                        resolvedVia = bridgeUrl.removePrefix("https://")
+                    )
+                }
+            }
+        }
+
+        val pipedBody = httpGet("$bridgeUrl/streams/$videoId")
+        if (pipedBody != null && pipedBody.trimStart().startsWith("{")) {
+            val json = JSONObject(pipedBody)
+            val streams = json.optJSONArray("videoStreams")
+            if (streams != null) {
+                val picked = pickBestProgressiveH264FromPiped(streams, maxHeight)
+                if (picked != null) {
+                    return ResolvedStream(
+                        videoId = videoId,
+                        title = json.optString("title", fallbackTitle).ifBlank { fallbackTitle },
+                        channelName = json.optString("uploader", fallbackChannel).ifBlank { fallbackChannel },
+                        channelId = channelId,
+                        thumbnailUrl = thumb,
+                        description = json.optString("description", fallbackDesc).ifBlank { fallbackDesc },
+                        directH264Url = picked.first,
+                        qualityLabel = picked.second,
+                        codecLabel = "H.264 / AVC (Hardware)",
+                        embedUrl = embedUrl,
+                        mobileWatchUrl = mobileWatchUrl,
                         resolvedVia = bridgeUrl.removePrefix("https://")
                     )
                 }
@@ -519,14 +684,17 @@ class YouTubeLegacyNetwork {
 
     suspend fun pingBridgeInstances(customBridgeUrl: String): List<BridgePingResult> =
         withContext(Dispatchers.IO) {
-            val targets = (listOf(customBridgeUrl) + defaultBridges).distinct()
+            val targets = (listOf(customBridgeUrl) + defaultBridges)
+                .map { it.trim().trimEnd('/') }
+                .filter { it.startsWith("https://") }
+                .distinct()
             coroutineScope {
                 targets.map { base ->
                     async {
                         val start = System.currentTimeMillis()
                         val ok = runCatching {
                             val req = Request.Builder()
-                                .url("$base/healthcheck")
+                                .url("$base/api/v1/stats")
                                 .header("User-Agent", DESKTOP_UA)
                                 .build()
                             client.newCall(req).execute().use { resp ->
@@ -550,6 +718,7 @@ class YouTubeLegacyNetwork {
             .url(url)
             .header("User-Agent", if (mobileUa) MOBILE_UA else DESKTOP_UA)
             .header("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+            .header("Cookie", "CONSENT=YES+cb.20210328-17-p0.en+FX+999; SOCS=CAI")
             .build()
 
         return client.newCall(request).execute().use { response ->

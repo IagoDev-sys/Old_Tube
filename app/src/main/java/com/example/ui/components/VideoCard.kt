@@ -3,7 +3,6 @@ package com.example.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,11 +14,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.filled.WatchLater
+import androidx.compose.material.icons.outlined.WatchLater
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -63,12 +61,12 @@ fun VideoCard(
             .testTag("video_card_${video.id}")
             .border(
                 width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant,
-                shape = RoundedCornerShape(14.dp)
+                color = MaterialTheme.colorScheme.outline,
+                shape = RoundedCornerShape(4.dp)
             )
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(4.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(4.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
@@ -79,7 +77,7 @@ fun VideoCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .background(Color(0xFF101010))
             ) {
                 AsyncImage(
                     model = ImageRequest.Builder(context)
@@ -96,54 +94,55 @@ fun VideoCard(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Subtle center play indicator
+                // Classic crisp play badge
                 Box(
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.58f))
-                        .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+                        .size(width = 52.dp, height = 36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(8.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(26.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                 }
 
-                // Source badge (top-left)
+                // Micro source badge
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(8.dp),
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color.Black.copy(alpha = 0.72f)
+                        .padding(6.dp),
+                    shape = RoundedCornerShape(2.dp),
+                    color = Color.Black.copy(alpha = 0.78f)
                 ) {
                     Text(
                         text = video.sourceTag,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                        color = Color(0xFF33B5E5),
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                     )
                 }
 
-                // Duration pill (bottom-right)
+                // Classic 2013 bottom-right black duration rectangle
                 if (video.durationText.isNotBlank()) {
                     Surface(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(8.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color.Black.copy(alpha = 0.82f)
+                            .padding(6.dp),
+                        shape = RoundedCornerShape(2.dp),
+                        color = Color.Black.copy(alpha = 0.85f)
                     ) {
                         Text(
                             text = video.durationText,
                             style = MaterialTheme.typography.labelMedium,
                             color = Color.White,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                         )
                     }
                 }
@@ -152,23 +151,23 @@ fun VideoCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+                    .padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.Top
             ) {
-                // Channel initial badge
+                // Classic square channel avatar tile
                 Box(
                     modifier = Modifier
                         .padding(top = 2.dp)
                         .size(34.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(MaterialTheme.colorScheme.primary),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = video.channelName.take(1).uppercase(),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        color = Color.White
                     )
                 }
 
@@ -182,19 +181,28 @@ fun VideoCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    val metaParts = listOfNotNull(
-                        video.channelName.takeIf { it.isNotBlank() },
-                        video.viewCountText.takeIf { it.isNotBlank() },
-                        video.publishedAt.takeIf { it.isNotBlank() }
-                    )
+                    Spacer(modifier = Modifier.height(3.dp))
                     Text(
-                        text = metaParts.joinToString(" • "),
+                        text = video.channelName,
                         style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    val metaParts = listOfNotNull(
+                        video.viewCountText.takeIf { it.isNotBlank() },
+                        video.publishedAt.takeIf { it.isNotBlank() }
+                    )
+                    if (metaParts.isNotEmpty()) {
+                        Text(
+                            text = metaParts.joinToString(" • "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
                 IconButton(
@@ -204,7 +212,7 @@ fun VideoCard(
                         .testTag("bookmark_button_${video.id}")
                 ) {
                     Icon(
-                        imageVector = if (isBookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                        imageVector = if (isBookmarked) Icons.Filled.WatchLater else Icons.Outlined.WatchLater,
                         contentDescription = stringResource(
                             if (isBookmarked) R.string.action_unbookmark else R.string.action_bookmark
                         ),

@@ -1,12 +1,10 @@
 package com.example.ui
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.ChannelEntity
-import com.example.data.local.OptimizationPreferences
 import com.example.data.local.SavedVideoEntity
-import com.example.data.local.TabTubeDatabase
+import com.example.data.model.ActivePlayerBackend
 import com.example.data.model.BridgePingResult
 import com.example.data.model.DeviceTelemetry
 import com.example.data.model.OptimizationSettings
@@ -14,9 +12,7 @@ import com.example.data.model.PlaybackEngineMode
 import com.example.data.model.QualityPreset
 import com.example.data.model.ResolvedStream
 import com.example.data.model.VideoItem
-import com.example.data.remote.YouTubeLegacyNetwork
 import com.example.data.repository.TabTubeRepository
-import com.example.data.telemetry.DeviceTelemetryProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -43,39 +39,35 @@ sealed interface PlayerUiState {
     data class Loading(val videoId: String, val title: String) : PlayerUiState
     data class Ready(
         val stream: ResolvedStream,
-        val useLiteEmbed: Boolean,
+        val activeBackend: ActivePlayerBackend,
         val resumePositionMs: Long
     ) : PlayerUiState
     data class Error(val message: String, val videoId: String) : PlayerUiState
 }
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
-
+class MainViewModel(
     private val repository: TabTubeRepository
-
-    init {
-        val db = TabTubeDatabase.getInstance(application)
-        val prefs = OptimizationPreferences(application)
-        val network = YouTubeLegacyNetwork()
-        val telemetry = DeviceTelemetryProvider(application)
-        repository = TabTubeRepository(db.dao(), prefs, network, telemetry)
-    }
+) : ViewModel() {
 
     val channels: StateFlow<List<ChannelEntity>> = repository.channelsFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
     val bookmarks: StateFlow<List<SavedVideoEntity>> = repository.bookmarksFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
     val history: StateFlow<List<SavedVideoEntity>> = repository.historyFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
-    val bookmarkedIds: StateFlow<Set<String>> = repository.bookmarksFlow
+    val bookmarkedIds: StateFlow<Set<String>> = bookmarks
         .map { list -> list.map { it.videoId }.toSet() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptySet())
+
+    val followedChannelIds: StateFlow<Set<String>> = channels
+        .map { list -> list.map { it.channelId }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptySet())
 
     val settings: StateFlow<OptimizationSettings> = repository.settingsFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), OptimizationSettings())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), OptimizationSettings())
 
     private val _selectedChannelId = MutableStateFlow<String?>(null)
     val selectedChannelId: StateFlow<String?> = _selectedChannelId.asStateFlow()
@@ -117,18 +109,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _feedState.value = FeedUiState.Loading
             runCatching {
-                repository.fetchFeed(_selectedChannelId.value)
+                repository.fetchFeedForChannels(_selectedChannelId.value)
             }.onSuccess { videos ->
                 if (videos.isEmpty()) {
                     _feedState.value = FeedUiState.Error(
-                        "Nenhum vídeo retornado pelos feeds RSS no momento. Verifique a conexão com a internet e tente novamente."
+                        "Nenhum vídeo retornado pelos feeds RSS no momento. Verifique sua conexão e tente novamente."
                     )
                 } else {
                     _feedState.value = FeedUiState.Success(videos)
                 }
             }.onFailure { err ->
                 _feedState.value = FeedUiState.Error(
-                    err.localizedMessage ?: "Falha ao carregar feeds Atom/RSS do YouTube."
+                    err.localizedMessage ?: "Falha ao carregar feeds Atom/RSS."
                 )
             }
         }
@@ -143,7 +135,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (q.isBlank()) return
         _searchQuery.value = q
 
-        // If the user pasted a direct YouTube link or ID into search, open it directly!
         val directId = repository.extractVideoId(q)
         if (directId != null && (q.contains("http") || q.contains("youtu") || q.length == 11)) {
             openVideoById(directId)
@@ -172,15 +163,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _playerState.value = PlayerUiState.Loading(video.id, video.title)
             runCatching {
-                repository.recordWatchStart(video)
-                repository.resolveStream(video.id, video)
-            }.onSuccess { resolved ->
-                val useLite = resolved.directH264Url == null ||
-                    settings.value.engineMode == PlaybackEngineMode.LITE_EMBED_ONLY
+                val resumePos = repository.recordWatchStart(video)
+                val resolved = repository.resolveStream(video.id, video)
+                resolved to resumePos
+            }.onSuccess { (resolved, resumePos) ->
+                val initialBackend = chooseInitialBackend(resolved, settings.value.engineMode)
                 _playerState.value = PlayerUiState.Ready(
                     stream = resolved,
-                    useLiteEmbed = useLite,
-                    resumePositionMs = 0L
+                    activeBackend = initialBackend,
+                    resumePositionMs = resumePos
                 )
             }.onFailure { err ->
                 _playerState.value = PlayerUiState.Error(
@@ -213,15 +204,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     description = resolved.description,
                     sourceTag = resolved.resolvedVia
                 )
-                repository.recordWatchStart(item)
-                resolved
-            }.onSuccess { resolved ->
-                val useLite = resolved.directH264Url == null ||
-                    settings.value.engineMode == PlaybackEngineMode.LITE_EMBED_ONLY
+                val resumePos = repository.recordWatchStart(item)
+                resolved to resumePos
+            }.onSuccess { (resolved, resumePos) ->
+                val initialBackend = chooseInitialBackend(resolved, settings.value.engineMode)
                 _playerState.value = PlayerUiState.Ready(
                     stream = resolved,
-                    useLiteEmbed = useLite,
-                    resumePositionMs = 0L
+                    activeBackend = initialBackend,
+                    resumePositionMs = resumePos
                 )
             }.onFailure { err ->
                 _playerState.value = PlayerUiState.Error(
@@ -232,14 +222,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun switchPlayerEngine(useLiteEmbed: Boolean) {
+    private fun chooseInitialBackend(
+        resolved: ResolvedStream,
+        mode: PlaybackEngineMode
+    ): ActivePlayerBackend {
+        return when (mode) {
+            PlaybackEngineMode.NATIVE_H264_ONLY ->
+                if (resolved.directH264Url != null) ActivePlayerBackend.NATIVE_H264
+                else ActivePlayerBackend.IFRAME_EMBED
+            PlaybackEngineMode.LITE_EMBED_ONLY ->
+                ActivePlayerBackend.IFRAME_EMBED
+            PlaybackEngineMode.HYBRID_AUTO ->
+                if (resolved.directH264Url != null) ActivePlayerBackend.NATIVE_H264
+                else ActivePlayerBackend.IFRAME_EMBED
+        }
+    }
+
+    fun switchPlayerBackend(backend: ActivePlayerBackend) {
         val current = _playerState.value
         if (current is PlayerUiState.Ready) {
-            if (!useLiteEmbed && current.stream.directH264Url == null) {
-                _statusMessage.value = "Stream MP4 H.264 direto indisponível nesta ponte; mantendo WebView Lite."
+            if (backend == ActivePlayerBackend.NATIVE_H264 && current.stream.directH264Url == null) {
+                _statusMessage.value = "Stream MP4 H.264 direto indisponível; usando Embed Direto."
                 return
             }
-            _playerState.value = current.copy(useLiteEmbed = useLiteEmbed)
+            _playerState.value = current.copy(activeBackend = backend)
         }
     }
 
@@ -256,11 +262,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleChannelSubscription(channelId: String, channelName: String) {
+        if (channelId.isBlank()) return
+        viewModelScope.launch {
+            if (channelId in followedChannelIds.value) {
+                repository.removeChannel(channelId)
+                _statusMessage.value = "Inscrição removida: $channelName"
+            } else {
+                repository.subscribeToChannel(channelId, channelName)
+                _statusMessage.value = "Inscrito em $channelName"
+            }
+        }
+    }
+
     fun addChannel(rawInput: String, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             val result = repository.addChannelFromInput(rawInput)
             result.onSuccess { channel ->
-                onResult(true, "Canal \"${channel.name}\" adicionado ao feed RSS.")
+                onResult(true, "Canal \"${channel.name}\" salvo localmente.")
                 refreshFeed()
             }.onFailure { err ->
                 onResult(false, err.message ?: "Erro ao adicionar canal.")
@@ -312,8 +331,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateDarkTheme(enabled: Boolean) {
-        viewModelScope.launch { repository.updateDarkTheme(enabled) }
+    fun updateClassicLightTheme(enabled: Boolean) {
+        viewModelScope.launch { repository.updateClassicLightTheme(enabled) }
     }
 
     fun updateCustomBridgeUrl(url: String) {
@@ -325,5 +344,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun consumeStatusMessage() {
         _statusMessage.value = null
+    }
+
+    private companion object {
+        const val STOP_TIMEOUT_MILLIS = 5000L
     }
 }

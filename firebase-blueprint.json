@@ -1,0 +1,158 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User preferences and account metadata for OLD Tube.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name."
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address (optional)."
+        },
+        "preferredQuality": {
+          "type": "string",
+          "enum": ["ECO_360P", "SD_480P", "HD_720P"],
+          "description": "Max video resolution cap."
+        },
+        "preferredEngine": {
+          "type": "string",
+          "enum": ["HYBRID_AUTO", "NATIVE_H264_ONLY", "LITE_EMBED_ONLY"],
+          "description": "Preferred video playback engine."
+        },
+        "classicLightTheme": {
+          "type": "boolean",
+          "description": "Whether classic YouTube light chrome is enabled."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when profile was created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when profile was last updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": ["userId", "displayName", "preferredQuality", "preferredEngine", "classicLightTheme", "createdAt", "updatedAt"]
+    },
+    "FollowedChannel": {
+      "title": "FollowedChannel",
+      "description": "A YouTube channel followed by the user via RSS Atom feed.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "channelId": {
+          "type": "string",
+          "description": "YouTube channel ID (e.g. UC...)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Channel display title."
+        },
+        "category": {
+          "type": "string",
+          "description": "Channel category label."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when followed."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated."
+        }
+      },
+      "required": ["userId", "channelId", "name", "category", "createdAt", "updatedAt"]
+    },
+    "CloudVideoRecord": {
+      "title": "CloudVideoRecord",
+      "description": "User's bookmarked or watched video record synced in Firestore.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "videoId": {
+          "type": "string",
+          "description": "YouTube 11-char video ID."
+        },
+        "title": {
+          "type": "string",
+          "description": "Video title."
+        },
+        "channelName": {
+          "type": "string",
+          "description": "Uploader channel name."
+        },
+        "channelId": {
+          "type": "string",
+          "description": "Uploader channel ID."
+        },
+        "thumbnailUrl": {
+          "type": "string",
+          "description": "Thumbnail URL."
+        },
+        "durationText": {
+          "type": "string",
+          "description": "Formatted duration string."
+        },
+        "publishedAt": {
+          "type": "string",
+          "description": "Published date string."
+        },
+        "bookmarked": {
+          "type": "boolean",
+          "description": "Whether the video is saved in bookmarks."
+        },
+        "lastPlayedAtMs": {
+          "type": "integer",
+          "description": "Client epoch millis of last watch."
+        },
+        "lastPositionMs": {
+          "type": "integer",
+          "description": "Playback resume position in ms."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on update."
+        }
+      },
+      "required": ["userId", "videoId", "title", "channelName", "thumbnailUrl", "bookmarked", "lastPlayedAtMs", "lastPositionMs", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile and retro playback settings."
+    },
+    "/users/{userId}/channels/{channelId}": {
+      "schema": { "$ref": "#/entities/FollowedChannel" },
+      "description": "User-scoped subscribed YouTube RSS channels."
+    },
+    "/users/{userId}/library/{videoId}": {
+      "schema": { "$ref": "#/entities/CloudVideoRecord" },
+      "description": "User-scoped saved videos and watch history."
+    }
+  }
+}
