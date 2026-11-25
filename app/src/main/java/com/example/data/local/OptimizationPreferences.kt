@@ -59,7 +59,7 @@ class OptimizationPreferences(private val context: Context) {
 
     suspend fun updateCustomBridgeUrl(url: String) {
         val normalized = url.trim().trimEnd('/')
-        if (normalized.startsWith("https://")) {
+        if (com.example.data.remote.YouTubeLegacyNetwork.isSafeBridgeUrl(normalized)) {
             context.dataStore.edit { it[Keys.BRIDGE_URL] = normalized }
         }
     }

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -206,6 +207,16 @@ fun PlayerScreen(
                 return
             }
 
+            var useVerticalShortFrame by remember(stream.videoId) { mutableStateOf(stream.isShort) }
+            val nextShortOrVideo = remember(relatedVideos, stream.videoId, stream.isShort) {
+                val others = relatedVideos.filter { it.id != stream.videoId }
+                if (stream.isShort) {
+                    others.firstOrNull { it.isShort } ?: others.firstOrNull()
+                } else {
+                    null
+                }
+            }
+
             BoxWithConstraints(modifier = modifier.fillMaxSize()) {
                 val isWideTablet = maxWidth >= 780.dp
 
@@ -218,32 +229,36 @@ fun PlayerScreen(
                                 .verticalScroll(rememberScrollState())
                         ) {
                             PlayerTopHeader(title = stream.channelName, onBack = onBack)
-                            LegacyPlayerView(
+                            AdaptivePlayerStage(
                                 stream = stream,
                                 activeBackend = playerState.activeBackend,
-                                isFullscreen = false,
+                                useVerticalShortFrame = useVerticalShortFrame,
+                                isWideTablet = true,
                                 onToggleFullscreen = { onSetFullscreen(true) },
                                 onSwitchBackend = onSwitchBackend,
-                                onPositionChanged = { pos -> onPositionChanged(stream.videoId, pos) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(16f / 9f)
+                                onPositionChanged = { pos -> onPositionChanged(stream.videoId, pos) }
                             )
                             PlayerMetadataPanel(
                                 stream = stream,
                                 activeBackend = playerState.activeBackend,
+                                useVerticalShortFrame = useVerticalShortFrame,
+                                nextShortVideo = nextShortOrVideo,
                                 isBookmarked = isBookmarked,
                                 isSubscribed = isSubscribed,
                                 onSwitchBackend = onSwitchBackend,
+                                onToggleAspect = { useVerticalShortFrame = !useVerticalShortFrame },
+                                onNextShort = { nextShortOrVideo?.let(onSelectRelated) },
                                 onBookmarkToggle = { onBookmarkToggle(currentAsVideo) },
                                 onToggleSubscribe = {
                                     onToggleSubscribe(stream.channelId, stream.channelName)
                                 },
                                 onOpenExternal = {
-                                    val intent = Intent(
-                                        Intent.ACTION_VIEW,
-                                        Uri.parse("https://www.youtube.com/watch?v=${stream.videoId}")
-                                    )
+                                    val targetUrl = if (stream.isShort) {
+                                        "https://www.youtube.com/shorts/${stream.videoId}"
+                                    } else {
+                                        "https://www.youtube.com/watch?v=${stream.videoId}"
+                                    }
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
                                     context.startActivity(intent)
                                 }
                             )
@@ -281,41 +296,47 @@ fun PlayerScreen(
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("player_lazy_column"),
                         contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
                         item {
                             PlayerTopHeader(title = stream.channelName, onBack = onBack)
                         }
                         item {
-                            LegacyPlayerView(
+                            AdaptivePlayerStage(
                                 stream = stream,
                                 activeBackend = playerState.activeBackend,
-                                isFullscreen = false,
+                                useVerticalShortFrame = useVerticalShortFrame,
+                                isWideTablet = false,
                                 onToggleFullscreen = { onSetFullscreen(true) },
                                 onSwitchBackend = onSwitchBackend,
-                                onPositionChanged = { pos -> onPositionChanged(stream.videoId, pos) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(16f / 9f)
+                                onPositionChanged = { pos -> onPositionChanged(stream.videoId, pos) }
                             )
                         }
                         item {
                             PlayerMetadataPanel(
                                 stream = stream,
                                 activeBackend = playerState.activeBackend,
+                                useVerticalShortFrame = useVerticalShortFrame,
+                                nextShortVideo = nextShortOrVideo,
                                 isBookmarked = isBookmarked,
                                 isSubscribed = isSubscribed,
                                 onSwitchBackend = onSwitchBackend,
+                                onToggleAspect = { useVerticalShortFrame = !useVerticalShortFrame },
+                                onNextShort = { nextShortOrVideo?.let(onSelectRelated) },
                                 onBookmarkToggle = { onBookmarkToggle(currentAsVideo) },
                                 onToggleSubscribe = {
                                     onToggleSubscribe(stream.channelId, stream.channelName)
                                 },
                                 onOpenExternal = {
-                                    val intent = Intent(
-                                        Intent.ACTION_VIEW,
-                                        Uri.parse("https://www.youtube.com/watch?v=${stream.videoId}")
-                                    )
+                                    val targetUrl = if (stream.isShort) {
+                                        "https://www.youtube.com/shorts/${stream.videoId}"
+                                    } else {
+                                        "https://www.youtube.com/watch?v=${stream.videoId}"
+                                    }
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
                                     context.startActivity(intent)
                                 }
                             )
@@ -382,14 +403,62 @@ private fun PlayerTopHeader(
     }
 }
 
+@Composable
+private fun AdaptivePlayerStage(
+    stream: ResolvedStream,
+    activeBackend: ActivePlayerBackend,
+    useVerticalShortFrame: Boolean,
+    isWideTablet: Boolean,
+    onToggleFullscreen: () -> Unit,
+    onSwitchBackend: (ActivePlayerBackend) -> Unit,
+    onPositionChanged: (Long) -> Unit
+) {
+    if (useVerticalShortFrame) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            LegacyPlayerView(
+                stream = stream,
+                activeBackend = activeBackend,
+                isFullscreen = false,
+                onToggleFullscreen = onToggleFullscreen,
+                onSwitchBackend = onSwitchBackend,
+                onPositionChanged = onPositionChanged,
+                modifier = Modifier
+                    .heightIn(max = if (isWideTablet) 460.dp else 320.dp)
+                    .aspectRatio(9f / 16f)
+            )
+        }
+    } else {
+        LegacyPlayerView(
+            stream = stream,
+            activeBackend = activeBackend,
+            isFullscreen = false,
+            onToggleFullscreen = onToggleFullscreen,
+            onSwitchBackend = onSwitchBackend,
+            onPositionChanged = onPositionChanged,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+        )
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PlayerMetadataPanel(
     stream: ResolvedStream,
     activeBackend: ActivePlayerBackend,
+    useVerticalShortFrame: Boolean,
+    nextShortVideo: VideoItem?,
     isBookmarked: Boolean,
     isSubscribed: Boolean,
     onSwitchBackend: (ActivePlayerBackend) -> Unit,
+    onToggleAspect: () -> Unit,
+    onNextShort: () -> Unit,
     onBookmarkToggle: () -> Unit,
     onToggleSubscribe: () -> Unit,
     onOpenExternal: () -> Unit
@@ -527,7 +596,10 @@ private fun PlayerMetadataPanel(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             OutlinedButton(
                 onClick = onBookmarkToggle,
                 shape = RoundedCornerShape(4.dp),
@@ -554,6 +626,28 @@ private fun PlayerMetadataPanel(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(stringResource(R.string.action_open_external))
+            }
+        }
+
+        if (stream.isShort || nextShortVideo != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onToggleAspect,
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.testTag("toggle_short_aspect_button")
+                ) {
+                    Text(if (useVerticalShortFrame) "Tela 9:16 (Short)" else "Tela 16:9")
+                }
+                if (nextShortVideo != null) {
+                    Button(
+                        onClick = onNextShort,
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.testTag("next_short_button")
+                    ) {
+                        Text("Próximo Short →")
+                    }
+                }
             }
         }
 

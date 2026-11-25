@@ -81,9 +81,13 @@ class TabTubeRepository(
         dao.deleteChannel(channelId)
     }
 
-    suspend fun resolveStream(videoId: String, knownVideo: VideoItem?): ResolvedStream {
+    suspend fun resolveStream(
+        videoId: String,
+        knownVideo: VideoItem?,
+        isShort: Boolean = false
+    ): ResolvedStream {
         val settings = settingsFlow.first()
-        return network.resolvePlayableStream(videoId, knownVideo, settings)
+        return network.resolvePlayableStream(videoId, knownVideo, settings, isShort)
     }
 
     suspend fun recordWatchStart(video: VideoItem): Long {

@@ -60,7 +60,8 @@ data class VideoItem(
     val durationText: String = "",
     val viewCountText: String = "",
     val description: String = "",
-    val sourceTag: String = "Atom RSS"
+    val sourceTag: String = "Atom RSS",
+    val isShort: Boolean = false
 )
 
 data class ResolvedStream(
@@ -75,7 +76,8 @@ data class ResolvedStream(
     val codecLabel: String,
     val embedUrl: String,
     val mobileWatchUrl: String,
-    val resolvedVia: String
+    val resolvedVia: String,
+    val isShort: Boolean = false
 )
 
 data class OptimizationSettings(
@@ -83,7 +85,7 @@ data class OptimizationSettings(
     val engineMode: PlaybackEngineMode = PlaybackEngineMode.HYBRID_AUTO,
     val lowRamThumbnails: Boolean = true,
     val classicLightTheme: Boolean = true,
-    val customBridgeUrl: String = "https://pipedapi.kavin.rocks"
+    val customBridgeUrl: String = "https://inv.nadeko.net"
 )
 
 data class DeviceTelemetry(

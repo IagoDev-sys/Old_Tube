@@ -89,7 +89,7 @@ class YouTubeLegacyNetwork {
         return parseAtomFeed(body, lowRamThumbnails)
     }
 
-    private fun parseAtomFeed(xml: String, lowRamThumbnails: Boolean): List<VideoItem> {
+    internal fun parseAtomFeed(xml: String, lowRamThumbnails: Boolean): List<VideoItem> {
         val videos = mutableListOf<VideoItem>()
         val parser = Xml.newPullParser()
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
@@ -107,6 +107,7 @@ class YouTubeLegacyNetwork {
         var published = ""
         var description = ""
         var views = ""
+        var linkHref = ""
 
         while (eventType != XmlPullParser.END_DOCUMENT) {
             when (eventType) {
@@ -122,8 +123,15 @@ class YouTubeLegacyNetwork {
                             published = ""
                             description = ""
                             views = ""
+                            linkHref = ""
                         }
                         "author" -> if (insideEntry) insideAuthor = true
+                        "link" -> if (insideEntry) {
+                            val rel = parser.getAttributeValue(null, "rel") ?: ""
+                            if (rel == "alternate" || linkHref.isEmpty()) {
+                                linkHref = parser.getAttributeValue(null, "href") ?: linkHref
+                            }
+                        }
                         "media:statistics" -> if (insideEntry) {
                             views = parser.getAttributeValue(null, "views") ?: ""
                         }
@@ -147,6 +155,7 @@ class YouTubeLegacyNetwork {
                         "author" -> insideAuthor = false
                         "entry" -> {
                             if (videoId.isNotBlank() && title.isNotBlank()) {
+                                val isShort = linkHref.contains("/shorts/", ignoreCase = true)
                                 videos.add(
                                     VideoItem(
                                         id = videoId,
@@ -158,7 +167,8 @@ class YouTubeLegacyNetwork {
                                         durationText = "",
                                         viewCountText = formatViews(views),
                                         description = description,
-                                        sourceTag = "Atom RSS"
+                                        sourceTag = if (isShort) "Short RSS" else "Atom RSS",
+                                        isShort = isShort
                                     )
                                 )
                             }
@@ -182,11 +192,7 @@ class YouTubeLegacyNetwork {
                 return@withContext trimmed to name
             }
 
-            val targetUrl = when {
-                trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
-                trimmed.startsWith("@") -> "https://www.youtube.com/$trimmed"
-                else -> "https://www.youtube.com/@$trimmed"
-            }
+            val targetUrl = normalizeChannelTargetUrl(trimmed) ?: return@withContext null
 
             val html = httpGet(targetUrl, mobileUa = false) ?: return@withContext null
             val channelId = Regex("""(?:itemprop="channelId"\s+content="|externalId":")(UC[A-Za-z0-9_-]{22})"""")
@@ -260,43 +266,81 @@ class YouTubeLegacyNetwork {
                 ?.optJSONArray("contents") ?: continue
 
             for (j in 0 until items.length()) {
-                val videoRenderer = items.optJSONObject(j)?.optJSONObject("videoRenderer") ?: continue
-                val videoId = videoRenderer.optString("videoId")
-                if (videoId.length != 11) continue
+                val entry = items.optJSONObject(j) ?: continue
 
-                val title = readRunsText(videoRenderer.optJSONObject("title"))
-                if (title.isBlank()) continue
+                val videoRenderer = entry.optJSONObject("videoRenderer")
+                if (videoRenderer != null) {
+                    val videoId = videoRenderer.optString("videoId")
+                    if (videoId.length != 11) continue
 
-                val ownerObj = videoRenderer.optJSONObject("ownerText")
-                    ?: videoRenderer.optJSONObject("longBylineText")
-                val channelName = readRunsText(ownerObj).ifBlank { "YouTube" }
-                val channelId = ownerObj
-                    ?.optJSONArray("runs")
-                    ?.optJSONObject(0)
-                    ?.optJSONObject("navigationEndpoint")
-                    ?.optJSONObject("browseEndpoint")
-                    ?.optString("browseId") ?: ""
+                    val title = readRunsText(videoRenderer.optJSONObject("title"))
+                    if (title.isBlank()) continue
 
-                val duration = videoRenderer.optJSONObject("lengthText")?.optString("simpleText") ?: ""
-                val views = videoRenderer.optJSONObject("shortViewCountText")?.optString("simpleText")
-                    ?: videoRenderer.optJSONObject("viewCountText")?.optString("simpleText")
-                    ?: ""
-                val published = videoRenderer.optJSONObject("publishedTimeText")?.optString("simpleText") ?: ""
+                    val ownerObj = videoRenderer.optJSONObject("ownerText")
+                        ?: videoRenderer.optJSONObject("longBylineText")
+                    val channelName = readRunsText(ownerObj).ifBlank { "YouTube" }
+                    val channelId = ownerObj
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("navigationEndpoint")
+                        ?.optJSONObject("browseEndpoint")
+                        ?.optString("browseId") ?: ""
 
-                results.add(
-                    VideoItem(
-                        id = videoId,
-                        title = title,
-                        channelName = channelName,
-                        channelId = channelId,
-                        thumbnailUrl = buildThumbnailUrl(videoId, lowRamThumbnails),
-                        publishedAt = published,
-                        durationText = duration,
-                        viewCountText = views,
-                        sourceTag = "Busca Direta"
+                    val navUrl = videoRenderer.optJSONObject("navigationEndpoint")
+                        ?.optJSONObject("commandMetadata")
+                        ?.optJSONObject("webCommandMetadata")
+                        ?.optString("url") ?: ""
+                    val isShort = navUrl.contains("/shorts/", ignoreCase = true)
+
+                    val duration = videoRenderer.optJSONObject("lengthText")?.optString("simpleText") ?: ""
+                    val views = videoRenderer.optJSONObject("shortViewCountText")?.optString("simpleText")
+                        ?: videoRenderer.optJSONObject("viewCountText")?.optString("simpleText")
+                        ?: ""
+                    val published = videoRenderer.optJSONObject("publishedTimeText")?.optString("simpleText") ?: ""
+
+                    results.add(
+                        VideoItem(
+                            id = videoId,
+                            title = title,
+                            channelName = channelName,
+                            channelId = channelId,
+                            thumbnailUrl = buildThumbnailUrl(videoId, lowRamThumbnails),
+                            publishedAt = published,
+                            durationText = duration,
+                            viewCountText = views,
+                            sourceTag = if (isShort) "Short" else "Busca Direta",
+                            isShort = isShort
+                        )
                     )
-                )
-                if (results.size >= 24) break
+                    if (results.size >= 24) break
+                    continue
+                }
+
+                // Extract Shorts shelf items when present in search
+                val reelItems = entry.optJSONObject("reelShelfRenderer")?.optJSONArray("items")
+                if (reelItems != null) {
+                    for (k in 0 until reelItems.length()) {
+                        val reel = reelItems.optJSONObject(k)?.optJSONObject("reelItemRenderer") ?: continue
+                        val videoId = reel.optString("videoId")
+                        if (videoId.length != 11) continue
+                        val title = reel.optJSONObject("headline")?.optString("simpleText")
+                            ?.ifBlank { readRunsText(reel.optJSONObject("headline")) }
+                            ?: "Short $videoId"
+                        val views = reel.optJSONObject("viewCountText")?.optString("simpleText") ?: ""
+                        results.add(
+                            VideoItem(
+                                id = videoId,
+                                title = title,
+                                channelName = "YouTube Shorts",
+                                thumbnailUrl = buildThumbnailUrl(videoId, lowRamThumbnails),
+                                viewCountText = views,
+                                sourceTag = "Short",
+                                isShort = true
+                            )
+                        )
+                        if (results.size >= 24) break
+                    }
+                }
             }
         }
         return results
@@ -386,18 +430,25 @@ class YouTubeLegacyNetwork {
     suspend fun resolvePlayableStream(
         videoId: String,
         knownVideo: VideoItem?,
-        settings: OptimizationSettings
+        settings: OptimizationSettings,
+        forceShort: Boolean = false
     ): ResolvedStream = withContext(Dispatchers.IO) {
         val baseline = knownVideo ?: fetchOEmbedMetadata(videoId, settings.lowRamThumbnails)
+        val isShort = forceShort || (knownVideo?.isShort == true)
         val title = baseline?.title ?: "Vídeo $videoId"
         val channelName = baseline?.channelName ?: "YouTube"
         val channelId = baseline?.channelId ?: ""
         val thumb = baseline?.thumbnailUrl ?: buildThumbnailUrl(videoId, settings.lowRamThumbnails)
         val desc = baseline?.description ?: ""
 
+        val loopQuery = if (isShort) "&loop=1&playlist=$videoId" else ""
         val embedUrl = "https://www.youtube-nocookie.com/embed/$videoId" +
-            "?autoplay=1&playsinline=1&rel=0&modestbranding=1&vq=${settings.qualityPreset.youtubeVqParam}"
-        val mobileWatchUrl = "https://m.youtube.com/watch?v=$videoId"
+            "?autoplay=1&playsinline=1&rel=0&modestbranding=1&vq=${settings.qualityPreset.youtubeVqParam}$loopQuery"
+        val mobileWatchUrl = if (isShort) {
+            "https://m.youtube.com/shorts/$videoId"
+        } else {
+            "https://m.youtube.com/watch?v=$videoId"
+        }
 
         if (settings.engineMode == PlaybackEngineMode.LITE_EMBED_ONLY) {
             return@withContext ResolvedStream(
@@ -412,7 +463,8 @@ class YouTubeLegacyNetwork {
                 codecLabel = "Embed Direto",
                 embedUrl = embedUrl,
                 mobileWatchUrl = mobileWatchUrl,
-                resolvedVia = "Embed YouTube"
+                resolvedVia = if (isShort) "Shorts Embed" else "Embed YouTube",
+                isShort = isShort
             )
         }
 
@@ -427,7 +479,8 @@ class YouTubeLegacyNetwork {
                 thumb = thumb,
                 fallbackDesc = desc,
                 embedUrl = embedUrl,
-                mobileWatchUrl = mobileWatchUrl
+                mobileWatchUrl = mobileWatchUrl,
+                isShort = isShort
             )
         }.getOrNull()
         if (directInnerTube != null && directInnerTube.directH264Url != null) {
@@ -451,7 +504,8 @@ class YouTubeLegacyNetwork {
                     thumb = thumb,
                     fallbackDesc = desc,
                     embedUrl = embedUrl,
-                    mobileWatchUrl = mobileWatchUrl
+                    mobileWatchUrl = mobileWatchUrl,
+                    isShort = isShort
                 )
             }.getOrNull()
             if (bridgeResult != null && bridgeResult.directH264Url != null) {
@@ -471,7 +525,8 @@ class YouTubeLegacyNetwork {
             codecLabel = "Embed + Mobile",
             embedUrl = embedUrl,
             mobileWatchUrl = mobileWatchUrl,
-            resolvedVia = "YouTube Direto"
+            resolvedVia = if (isShort) "Shorts Direto" else "YouTube Direto",
+            isShort = isShort
         )
     }
 
@@ -484,7 +539,8 @@ class YouTubeLegacyNetwork {
         thumb: String,
         fallbackDesc: String,
         embedUrl: String,
-        mobileWatchUrl: String
+        mobileWatchUrl: String,
+        isShort: Boolean
     ): ResolvedStream? {
         val clients = listOf(
             Triple("ANDROID_VR", "1.60.19", "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; Quest 3 Build/SQ3A.220605.009.A1) gzip"),
@@ -542,7 +598,8 @@ class YouTubeLegacyNetwork {
                 codecLabel = "H.264 / MP4 (Hardware)",
                 embedUrl = embedUrl,
                 mobileWatchUrl = mobileWatchUrl,
-                resolvedVia = "Stream Direto ($clientName)"
+                resolvedVia = "Stream Direto ($clientName)",
+                isShort = isShort
             )
         }
         return null
@@ -580,7 +637,8 @@ class YouTubeLegacyNetwork {
         thumb: String,
         fallbackDesc: String,
         embedUrl: String,
-        mobileWatchUrl: String
+        mobileWatchUrl: String,
+        isShort: Boolean
     ): ResolvedStream? {
         val invBody = httpGet("$bridgeUrl/api/v1/videos/$videoId")
         if (invBody != null && invBody.trimStart().startsWith("{")) {
@@ -601,7 +659,8 @@ class YouTubeLegacyNetwork {
                         codecLabel = "H.264 / MP4 (Hardware)",
                         embedUrl = embedUrl,
                         mobileWatchUrl = mobileWatchUrl,
-                        resolvedVia = bridgeUrl.removePrefix("https://")
+                        resolvedVia = bridgeUrl.removePrefix("https://"),
+                        isShort = isShort
                     )
                 }
             }
@@ -626,7 +685,8 @@ class YouTubeLegacyNetwork {
                         codecLabel = "H.264 / AVC (Hardware)",
                         embedUrl = embedUrl,
                         mobileWatchUrl = mobileWatchUrl,
-                        resolvedVia = bridgeUrl.removePrefix("https://")
+                        resolvedVia = bridgeUrl.removePrefix("https://"),
+                        isShort = isShort
                     )
                 }
             }
@@ -813,5 +873,34 @@ class YouTubeLegacyNetwork {
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         private const val MOBILE_UA =
             "Mozilla/5.0 (Linux; Android 7.0; SM-T560) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        fun isSafeBridgeUrl(rawUrl: String): Boolean {
+            val trimmed = rawUrl.trim().trimEnd('/')
+            if (trimmed.isBlank() || trimmed.any { it.isWhitespace() }) return false
+            val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return false
+            if (!uri.scheme.equals("https", ignoreCase = true)) return false
+            if (!uri.userInfo.isNullOrEmpty()) return false
+            val host = uri.host?.lowercase() ?: return false
+            if (host.isBlank() || host == "localhost" || host.startsWith("127.") || host.startsWith("10.") || host.startsWith("192.168.")) {
+                return false
+            }
+            return host.contains(".")
+        }
+
+        fun normalizeChannelTargetUrl(rawInput: String): String? {
+            val trimmed = rawInput.trim()
+            if (trimmed.isBlank() || trimmed.any { it.isWhitespace() }) return null
+            if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
+                val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return null
+                if (!uri.scheme.equals("https", ignoreCase = true)) return null
+                if (!uri.userInfo.isNullOrEmpty()) return null
+                val host = uri.host?.lowercase()?.trimEnd('.') ?: return null
+                val allowed = host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be"
+                return if (allowed) trimmed else null
+            }
+            val cleanHandle = trimmed.removePrefix("@")
+            if (!Regex("^[A-Za-z0-9_.-]{2,64}$").matches(cleanHandle)) return null
+            return "https://www.youtube.com/@$cleanHandle"
+        }
     }
 }

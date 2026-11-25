@@ -69,6 +69,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.R
 import com.example.data.model.ActivePlayerBackend
 import com.example.data.model.ResolvedStream
+import com.example.data.remote.WebViewSecurityPolicy
 import com.example.ui.theme.ClassicTubeRedBright
 import kotlinx.coroutines.delay
 
@@ -486,11 +487,14 @@ private fun DirectEmbedWebPlayer(
                         settings.apply {
                             javaScriptEnabled = true
                             domStorageEnabled = true
+                            allowFileAccess = false
+                            allowContentAccess = false
+                            setGeolocationEnabled(false)
                             mediaPlaybackRequiresUserGesture = false
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             cacheMode = WebSettings.LOAD_DEFAULT
-                            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                             userAgentString =
                                 "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
                         }
@@ -500,12 +504,8 @@ private fun DirectEmbedWebPlayer(
                                 view: WebView?,
                                 request: WebResourceRequest?
                             ): Boolean {
-                                val url = request?.url ?: return false
-                                val scheme = url.scheme?.lowercase() ?: ""
-                                if (scheme != "http" && scheme != "https") {
-                                    return true
-                                }
-                                return false
+                                val raw = request?.url?.toString()
+                                return !WebViewSecurityPolicy.isAllowedNavigationUrl(raw)
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
@@ -620,12 +620,15 @@ private fun MobileWatchWebPlayer(
                         settings.apply {
                             javaScriptEnabled = true
                             domStorageEnabled = true
-                            javaScriptCanOpenWindowsAutomatically = true
+                            allowFileAccess = false
+                            allowContentAccess = false
+                            setGeolocationEnabled(false)
+                            javaScriptCanOpenWindowsAutomatically = false
                             mediaPlaybackRequiresUserGesture = false
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             cacheMode = WebSettings.LOAD_DEFAULT
-                            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                             userAgentString =
                                 "Mozilla/5.0 (Linux; Android 11; SM-T560) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
                         }
@@ -635,12 +638,8 @@ private fun MobileWatchWebPlayer(
                                 view: WebView?,
                                 request: WebResourceRequest?
                             ): Boolean {
-                                val url = request?.url ?: return false
-                                val scheme = url.scheme?.lowercase() ?: ""
-                                if (scheme != "http" && scheme != "https") {
-                                    return true
-                                }
-                                return false
+                                val raw = request?.url?.toString()
+                                return !WebViewSecurityPolicy.isAllowedNavigationUrl(raw)
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {

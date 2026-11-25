@@ -37,6 +37,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,6 +72,8 @@ fun FeedScreen(
     onOpenDiagnostics: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var contentFilter by remember { mutableStateOf("ALL") }
+
     Column(modifier = modifier.fillMaxSize()) {
         // Classic 2013 Section Title + Hardware Strip
         Row(
@@ -246,6 +252,44 @@ fun FeedScreen(
             }
 
             is FeedUiState.Success -> {
+                val shortsCount = feedState.videos.count { it.isShort }
+                val filteredVideos = when (contentFilter) {
+                    "SHORTS" -> feedState.videos.filter { it.isShort }
+                    "VIDEOS" -> feedState.videos.filter { !it.isShort }
+                    else -> feedState.videos
+                }
+
+                if (shortsCount > 0) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = contentFilter == "ALL",
+                            onClick = { contentFilter = "ALL" },
+                            label = { Text("Tudo (${feedState.videos.size})") },
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.testTag("filter_all_media")
+                        )
+                        FilterChip(
+                            selected = contentFilter == "VIDEOS",
+                            onClick = { contentFilter = "VIDEOS" },
+                            label = { Text("Vídeos (${feedState.videos.size - shortsCount})") },
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.testTag("filter_videos_only")
+                        )
+                        FilterChip(
+                            selected = contentFilter == "SHORTS",
+                            onClick = { contentFilter = "SHORTS" },
+                            label = { Text("Shorts ($shortsCount)") },
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.testTag("filter_shorts_only")
+                        )
+                    }
+                }
+
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     val columns = when {
                         maxWidth >= 900.dp -> 3
@@ -259,7 +303,7 @@ fun FeedScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        items(feedState.videos, key = { it.id }) { video ->
+                        items(filteredVideos, key = { it.id }) { video ->
                             VideoCard(
                                 video = video,
                                 isBookmarked = video.id in bookmarkedIds,

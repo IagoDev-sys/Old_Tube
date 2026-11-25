@@ -128,8 +128,24 @@ fun VideoCard(
                     )
                 }
 
-                // Classic 2013 bottom-right black duration rectangle
-                if (video.durationText.isNotBlank()) {
+                // Classic 2013 bottom-right black duration rectangle or SHORTS badge
+                if (video.isShort) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(6.dp),
+                        shape = RoundedCornerShape(2.dp),
+                        color = MaterialTheme.colorScheme.primary
+                    ) {
+                        Text(
+                            text = "SHORTS",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                } else if (video.durationText.isNotBlank()) {
                     Surface(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)

@@ -137,7 +137,7 @@ class MainViewModel(
 
         val directId = repository.extractVideoId(q)
         if (directId != null && (q.contains("http") || q.contains("youtu") || q.length == 11)) {
-            openVideoById(directId)
+            openVideoById(directId, q.contains("/shorts/", ignoreCase = true))
             return
         }
 
@@ -164,7 +164,7 @@ class MainViewModel(
             _playerState.value = PlayerUiState.Loading(video.id, video.title)
             runCatching {
                 val resumePos = repository.recordWatchStart(video)
-                val resolved = repository.resolveStream(video.id, video)
+                val resolved = repository.resolveStream(video.id, video, video.isShort)
                 resolved to resumePos
             }.onSuccess { (resolved, resumePos) ->
                 val initialBackend = chooseInitialBackend(resolved, settings.value.engineMode)
@@ -186,15 +186,16 @@ class MainViewModel(
 
     fun openVideoByInput(rawInput: String): Boolean {
         val videoId = repository.extractVideoId(rawInput) ?: return false
-        openVideoById(videoId)
+        val isShort = rawInput.contains("/shorts/", ignoreCase = true)
+        openVideoById(videoId, isShort)
         return true
     }
 
-    fun openVideoById(videoId: String) {
+    fun openVideoById(videoId: String, isShort: Boolean = false) {
         viewModelScope.launch {
             _playerState.value = PlayerUiState.Loading(videoId, "Carregando vídeo...")
             runCatching {
-                val resolved = repository.resolveStream(videoId, null)
+                val resolved = repository.resolveStream(videoId, null, isShort)
                 val item = VideoItem(
                     id = resolved.videoId,
                     title = resolved.title,
@@ -202,7 +203,8 @@ class MainViewModel(
                     channelId = resolved.channelId,
                     thumbnailUrl = resolved.thumbnailUrl,
                     description = resolved.description,
-                    sourceTag = resolved.resolvedVia
+                    sourceTag = resolved.resolvedVia,
+                    isShort = resolved.isShort
                 )
                 val resumePos = repository.recordWatchStart(item)
                 resolved to resumePos

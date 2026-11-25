@@ -359,7 +359,7 @@ private fun OldTubeMainShell(viewModel: MainViewModel) {
                                         val potentialId = viewModel.extractVideoId(explicit ?: searchQuery)
                                         val raw = (explicit ?: searchQuery).trim()
                                         if (potentialId != null && (raw.contains("http") || raw.contains("youtu") || raw.length == 11)) {
-                                            viewModel.openVideoById(potentialId)
+                                            viewModel.openVideoById(potentialId, raw.contains("/shorts/", ignoreCase = true))
                                             openPlayerRoute()
                                         } else {
                                             viewModel.executeSearch(explicit)
